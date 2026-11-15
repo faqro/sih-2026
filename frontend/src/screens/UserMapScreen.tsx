@@ -33,6 +33,7 @@ export default function UserMapScreen({
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -110,29 +111,49 @@ export default function UserMapScreen({
       ) : null}
 
       <SafeAreaView pointerEvents="box-none" style={styles.overlay}>
-        <View style={styles.accountActions}>
-          {error ? <Text style={styles.accountError}>{error}</Text> : null}
+        <View style={styles.topRight}>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel={isMenuOpen ? 'Close account menu' : 'Open account menu'}
+            accessibilityState={{ expanded: isMenuOpen }}
             disabled={isSubmitting}
-            onPress={onSignOut}
-            style={[styles.actionButton, isSubmitting && styles.disabledButton]}
+            onPress={() => setIsMenuOpen((isOpen) => !isOpen)}
+            style={[styles.menuButton, isSubmitting && styles.disabledButton]}
           >
-            <Text style={styles.signOutText}>Sign out</Text>
+            <View style={styles.hamburgerIcon}>
+              <View style={styles.hamburgerLine} />
+              <View style={styles.hamburgerLine} />
+              <View style={styles.hamburgerLine} />
+            </View>
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            disabled={isSubmitting}
-            onPress={onDeleteAccount}
-            style={[
-              styles.actionButton,
-              styles.deleteButton,
-              isSubmitting && styles.disabledButton,
-            ]}
-          >
-            <Text style={styles.deleteText}>
-              {isSubmitting ? 'Deleting account...' : 'Delete account'}
-            </Text>
+          {isMenuOpen ? (
+            <View style={styles.menu}>
+              {error ? <Text style={styles.accountError}>{error}</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSubmitting}
+                onPress={onSignOut}
+                style={styles.menuItem}
+              >
+                <Text style={styles.signOutText}>Sign out</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSubmitting}
+                onPress={onDeleteAccount}
+                style={[styles.menuItem, styles.deleteButton]}
+              >
+                <Text style={styles.deleteText}>
+                  {isSubmitting ? 'Deleting account...' : 'Delete account'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.bottomActions}>
+          <Pressable accessibilityRole="button" style={styles.requestButton}>
+            <Text style={styles.requestButtonText}>Request UberDap</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -188,33 +209,83 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     zIndex: 1100,
     elevation: 10,
-    justifyContent: 'flex-end',
+  },
+  topRight: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    alignItems: 'flex-end',
+    zIndex: 1102,
+    elevation: 12,
+  },
+  menuButton: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 26,
+    backgroundColor: '#ffffff',
+    shadowColor: '#172033',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+  },
+  hamburgerIcon: {
+    gap: 4,
+  },
+  hamburgerLine: {
+    width: 19,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#172033',
+  },
+  menu: {
+    width: 200,
+    marginTop: 10,
+    borderRadius: 14,
+    paddingVertical: 6,
+    backgroundColor: '#ffffff',
+    shadowColor: '#172033',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  menuItem: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingHorizontal: 16,
   },
-  accountActions: {
-    gap: 10,
+  bottomActions: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    left: 16,
+  },
+  requestButton: {
+    minHeight: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 16,
-    marginBottom: 16,
-    padding: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    backgroundColor: '#314b9a',
     shadowColor: '#172033',
-    shadowOpacity: 0.14,
-    shadowRadius: 14,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    elevation: 8,
+  },
+  requestButtonText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
   },
   accountError: {
     color: '#b42318',
     fontSize: 13,
     textAlign: 'center',
-  },
-  actionButton: {
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#cbd3e3',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   disabledButton: {
     opacity: 0.6,
@@ -225,7 +296,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   deleteButton: {
-    borderColor: '#f0b8b5',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e5e9f0',
   },
   deleteText: {
     color: '#b42318',
