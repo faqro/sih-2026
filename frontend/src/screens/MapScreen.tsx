@@ -1,5 +1,5 @@
 import * as Location from 'expo-location';
-import { useEffect, useRef, useState } from 'react';
+import { type ComponentRef, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -33,6 +33,11 @@ import {
   type Coordinates,
   type DapperLocationFailureReason,
 } from '../location/dapperLocation';
+import {
+  reverseGeocodeLocation,
+  searchLocations,
+  type LocationSearchResult,
+} from '../location/locationSearch';
 import { useDapperLocationStream } from '../hooks/useDapperLocationStream';
 import MapSurface from './MapSurface';
 
@@ -184,6 +189,21 @@ export default function MapScreen({
   const [requestLocationError, setRequestLocationError] = useState<
     string | null
   >(null);
+  const [orderLocationMode, setOrderLocationMode] = useState<
+    'current' | 'custom'
+  >('current');
+  const [customOrderLocation, setCustomOrderLocation] =
+    useState<Coordinates | null>(null);
+  const [customOrderLabel, setCustomOrderLabel] = useState<string | null>(null);
+  const [isSearchBoxOpen, setIsSearchBoxOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<LocationSearchResult[]>(
+    [],
+  );
+  const [isSearchingLocations, setIsSearchingLocations] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [isLocatingCurrent, setIsLocatingCurrent] = useState(false);
+  const [isPinpointNoticeVisible, setIsPinpointNoticeVisible] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
@@ -191,11 +211,16 @@ export default function MapScreen({
   const [profileName, setProfileName] = useState(name ?? '');
   const [profileUsername, setProfileUsername] = useState(username ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [passwordCurrent, setPasswordCurrent] = useState('');
+  const [passwordNew, setPasswordNew] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [ratingsData, setRatingsData] = useState<DapperRatingsResponse | null>(
     null,
   );
@@ -223,6 +248,7 @@ export default function MapScreen({
   const sheetProgress = useRef(new Animated.Value(0)).current;
   const preferencesProgress = useRef(new Animated.Value(0)).current;
   const profileProgress = useRef(new Animated.Value(0)).current;
+  const passwordSheetProgress = useRef(new Animated.Value(0)).current;
   const dapperSheetProgress = useRef(new Animated.Value(0)).current;
   const dapperContentRef = useRef(false);
   const dapperSheetOpenRef = useRef(false);
@@ -231,6 +257,8 @@ export default function MapScreen({
   const activeModeRef = useRef(activeMode);
   const goOnlineRequestIdRef = useRef(0);
   const requestLocationRequestIdRef = useRef(0);
+  const searchInputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const reverseGeocodeIdRef = useRef(0);
   activeModeRef.current = activeMode;
   const sheetTranslateY = sheetProgress.interpolate({
     inputRange: [0, 1],
@@ -243,6 +271,11 @@ export default function MapScreen({
   const profileTranslateY = profileProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [profileSheetHeight, 0],
+  });
+  const passwordSheetHeight = Math.min(Math.round(viewportHeight * 0.72), 520);
+  const passwordSheetTranslateY = passwordSheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [passwordSheetHeight, 0],
   });
   const dapperSheetTranslateY = dapperSheetProgress.interpolate({
     inputRange: [0, 1],
@@ -278,11 +311,15 @@ export default function MapScreen({
     isDapperMode && (offer !== null || activeDap !== null);
   const isOrderRequestStreamingLocation =
     dapRequest.status === 'connecting' || dapRequest.status === 'searching';
+  const activeOrderLocation =
+    orderLocationMode === 'custom' && customOrderLocation
+      ? customOrderLocation
+      : location;
   const ownMapLocation = isDapperMode
     ? dapperLocation ?? location
     : isOrderRequestStreamingLocation
-      ? dapRequest.userLocation ?? location
-      : location ?? dapRequest.userLocation;
+      ? dapRequest.userLocation ?? activeOrderLocation
+      : activeOrderLocation ?? dapRequest.userLocation;
   const counterpartMapLocation = isDapperMode
     ? activeDap?.location ?? offer?.location ?? null
     : dapRequest.status === 'matched'
@@ -402,6 +439,8 @@ export default function MapScreen({
       requestLocationRequestIdRef.current += 1;
       setIsRequestingLocation(false);
       setRequestLocationError(null);
+      setIsSearchBoxOpen(false);
+      setIsPinpointNoticeVisible(false);
     }
 
     if (activeMode !== 'order') {
@@ -410,6 +449,51 @@ export default function MapScreen({
       setIsRequestMenuOpen(false);
     }
   }, [activeMode, sheetProgress]);
+
+  useEffect(() => {
+    if (isDapperMode || !isSearchBoxOpen) {
+      return;
+    }
+
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setSearchResults([]);
+      setSearchError(null);
+      setIsSearchingLocations(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsSearchingLocations(true);
+    setSearchError(null);
+
+    const timeout = setTimeout(() => {
+      void searchLocations(trimmed, controller.signal)
+        .then((results) => {
+          if (!controller.signal.aborted && isMountedRef.current) {
+            setSearchResults(results);
+            setIsSearchingLocations(false);
+          }
+        })
+        .catch((err) => {
+          if (
+            controller.signal.aborted ||
+            (err instanceof Error && err.name === 'AbortError') ||
+            !isMountedRef.current
+          ) {
+            return;
+          }
+          setSearchResults([]);
+          setSearchError('Unable to search locations. Try again.');
+          setIsSearchingLocations(false);
+        });
+    }, 350);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [isDapperMode, isSearchBoxOpen, searchQuery]);
 
   function handleSelectMode(
     nextMode: AppMode,
@@ -712,8 +796,12 @@ export default function MapScreen({
     setProfileName(name ?? '');
     setProfileUsername(username ?? '');
     setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
+    setIsPasswordModalOpen(false);
+    setPasswordCurrent('');
+    setPasswordNew('');
+    setPasswordConfirm('');
+    setPasswordError(null);
+    setPasswordSuccess(null);
     setProfileError(null);
     setProfileSuccess(null);
     setIsProfileOpen(true);
@@ -727,8 +815,11 @@ export default function MapScreen({
   }
 
   function closeProfile() {
-    if (isSavingProfile) {
+    if (isSavingProfile || isUpdatingPassword) {
       return;
+    }
+    if (isPasswordModalOpen) {
+      closePasswordModal();
     }
     Animated.timing(profileProgress, {
       toValue: 0,
@@ -739,6 +830,105 @@ export default function MapScreen({
         setIsProfileOpen(false);
       }
     });
+  }
+
+  function openPasswordModal() {
+    setPasswordCurrent('');
+    setPasswordNew('');
+    setPasswordConfirm('');
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    setIsPasswordModalOpen(true);
+    passwordSheetProgress.setValue(0);
+    Animated.timing(passwordSheetProgress, {
+      toValue: 1,
+      duration: 260,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closePasswordModal() {
+    if (isUpdatingPassword) {
+      return;
+    }
+    Animated.timing(passwordSheetProgress, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setIsPasswordModalOpen(false);
+        setPasswordCurrent('');
+        setPasswordNew('');
+        setPasswordConfirm('');
+        setPasswordError(null);
+        setPasswordSuccess(null);
+      }
+    });
+  }
+
+  function closeAllProfile() {
+    closePasswordModal();
+    closeProfile();
+  }
+
+  async function handleUpdatePassword() {
+    if (isUpdatingPassword) {
+      return;
+    }
+
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    if (!passwordCurrent) {
+      setPasswordError('Enter your current password.');
+      return;
+    }
+
+    if (passwordNew.length < 8 || passwordNew.length > 128) {
+      setPasswordError('New password must be between 8 and 128 characters.');
+      return;
+    }
+
+    if (passwordNew !== passwordConfirm) {
+      setPasswordError('New passwords do not match.');
+      return;
+    }
+
+    if (passwordNew === passwordCurrent) {
+      setPasswordError(
+        'New password must be different from your current password.',
+      );
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const result = await onUpdateProfile({
+        currentPassword: passwordCurrent,
+        newPassword: passwordNew,
+      });
+      if (!isMountedRef.current) {
+        return;
+      }
+      if (!result.ok) {
+        setPasswordError(result.error);
+        return;
+      }
+      setPasswordCurrent('');
+      setPasswordNew('');
+      setPasswordConfirm('');
+      setPasswordSuccess('Password updated securely.');
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          closePasswordModal();
+        }
+      }, 1200);
+    } finally {
+      if (isMountedRef.current) {
+        setIsUpdatingPassword(false);
+      }
+    }
   }
 
   async function handleSaveProfile() {
@@ -752,7 +942,6 @@ export default function MapScreen({
     const existingUsername = (username ?? '').toLowerCase();
     const isUsernameChanged = normalizedUsername !== existingUsername;
     const isNameChanged = trimmedName !== existingName;
-    const isPasswordChanged = newPassword.length > 0;
 
     setProfileError(null);
     setProfileSuccess(null);
@@ -769,24 +958,9 @@ export default function MapScreen({
       return;
     }
 
-    if (!isNameChanged && !isUsernameChanged && !isPasswordChanged) {
+    if (!isNameChanged && !isUsernameChanged) {
       setProfileError('No changes to save.');
       return;
-    }
-
-    if (isPasswordChanged) {
-      if (newPassword.length < 8 || newPassword.length > 128) {
-        setProfileError('New password must be between 8 and 128 characters.');
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        setProfileError('New passwords do not match.');
-        return;
-      }
-      if (!currentPassword) {
-        setProfileError('Enter your current password to set a new password.');
-        return;
-      }
     }
 
     if (isUsernameChanged && authProvider === 'local' && !currentPassword) {
@@ -800,9 +974,6 @@ export default function MapScreen({
     }
     if (isUsernameChanged) {
       payload.username = normalizedUsername;
-    }
-    if (isPasswordChanged) {
-      payload.newPassword = newPassword;
     }
     if (currentPassword) {
       payload.currentPassword = currentPassword;
@@ -819,8 +990,6 @@ export default function MapScreen({
         return;
       }
       setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
       setProfileSuccess('Profile updated securely.');
     } finally {
       if (isMountedRef.current) {
@@ -875,6 +1044,14 @@ export default function MapScreen({
     setRatingComment('');
     setRatingSubmitted(false);
     setRatingError(null);
+
+    if (orderLocationMode === 'custom' && customOrderLocation) {
+      void dapRequest.startRequest(selectedDap, customOrderLocation, {
+        useLiveLocation: false,
+      });
+      return;
+    }
+
     const requestId = ++requestLocationRequestIdRef.current;
     setIsRequestingLocation(true);
 
@@ -908,25 +1085,26 @@ export default function MapScreen({
 
       if (!result.ok) {
         setRequestLocationError(
-          result.reason === 'permission-denied'
-            ? 'Allow location access to request an UberDap.'
-            : result.reason === 'services-disabled'
-              ? 'Enable location services to request an UberDap.'
-              : 'Unable to get your location. Try again.',
+          result.reason === 'permission-denied' ||
+            result.reason === 'services-disabled'
+            ? 'Location is off. Enable location or search/pinpoint a location on the map.'
+            : 'Unable to get your location. Try again or set a location on the map.',
         );
         return;
       }
 
       setLocation(result.coordinates);
       setLocationTrackingRevision((revision) => revision + 1);
-      void dapRequest.startRequest(selectedDap, result.coordinates);
+      void dapRequest.startRequest(selectedDap, result.coordinates, {
+        useLiveLocation: true,
+      });
     } catch {
       if (
         isMountedRef.current &&
         requestLocationRequestIdRef.current === requestId
       ) {
         setRequestLocationError(
-          'Unable to get your location. Check location services and try again.',
+          'Unable to get your location. Check location services or set a location on the map.',
         );
       }
     } finally {
@@ -937,6 +1115,119 @@ export default function MapScreen({
         setIsRequestingLocation(false);
       }
     }
+  }
+
+  function handleSelectSearchResult(result: LocationSearchResult) {
+    setOrderLocationMode('custom');
+    setCustomOrderLocation(result.coordinates);
+    setCustomOrderLabel(result.label);
+    setRequestLocationError(null);
+    setSearchError(null);
+    setIsSearchBoxOpen(false);
+    setIsPinpointNoticeVisible(false);
+  }
+
+  function handlePinOrderLocation(coordinates: Coordinates) {
+    if (
+      isDapperMode ||
+      requestInProgress ||
+      isRequestMenuOpen ||
+      isPreferencesOpen ||
+      isProfileOpen
+    ) {
+      return;
+    }
+
+    setIsMenuOpen(false);
+    setIsSearchBoxOpen(false);
+    setIsPinpointNoticeVisible(false);
+    setOrderLocationMode('custom');
+    setCustomOrderLocation(coordinates);
+    setCustomOrderLabel(
+      `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}`,
+    );
+    setRequestLocationError(null);
+    setSearchError(null);
+
+    const geocodeId = ++reverseGeocodeIdRef.current;
+    void reverseGeocodeLocation(coordinates).then((label) => {
+      if (
+        label &&
+        isMountedRef.current &&
+        reverseGeocodeIdRef.current === geocodeId
+      ) {
+        setCustomOrderLabel(label);
+      }
+    });
+  }
+
+  async function handleUseCurrentLocation() {
+    if (isLocatingCurrent) {
+      return;
+    }
+
+    setSearchError(null);
+    setIsLocatingCurrent(true);
+
+    try {
+      const result =
+        Platform.OS === 'web'
+          ? await resolveWebDapperOnlineLocation()
+          : await resolveDapperOnlineLocation(
+              {
+                hasServicesEnabledAsync: () =>
+                  Location.hasServicesEnabledAsync(),
+                getForegroundPermissionsAsync: () =>
+                  Location.getForegroundPermissionsAsync(),
+                requestForegroundPermissionsAsync: () =>
+                  Location.requestForegroundPermissionsAsync(),
+                getCurrentPositionAsync: () =>
+                  Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                  }),
+              },
+              { isNative: true },
+            );
+
+      if (!isMountedRef.current || activeModeRef.current !== 'order') {
+        return;
+      }
+
+      if (!result.ok) {
+        setSearchError(
+          result.reason === 'permission-denied' ||
+            result.reason === 'services-disabled'
+            ? 'Location is disabled. Enable location or search/pinpoint a spot instead.'
+            : 'Unable to get your current location.',
+        );
+        return;
+      }
+
+      setLocation(result.coordinates);
+      setOrderLocationMode('current');
+      setCustomOrderLocation(null);
+      setCustomOrderLabel(null);
+      setRequestLocationError(null);
+      setIsSearchBoxOpen(false);
+      setIsPinpointNoticeVisible(false);
+      setLocationTrackingRevision((revision) => revision + 1);
+    } catch {
+      if (isMountedRef.current) {
+        setSearchError('Unable to read your current location.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsLocatingCurrent(false);
+      }
+    }
+  }
+
+  function handleClearPinnedLocation() {
+    setOrderLocationMode('current');
+    setCustomOrderLocation(null);
+    setCustomOrderLabel(null);
+    setRequestLocationError(null);
+    setIsPinpointNoticeVisible(false);
   }
 
   async function submitCrispinessRating() {
@@ -985,6 +1276,8 @@ export default function MapScreen({
     ratingsData?.averageRating ?? crispinessRating ?? null;
   const displayRatingCount =
     ratingsData?.totalRatings ?? crispinessRatingCount ?? 0;
+  const isUsernameChanged =
+    profileUsername.trim().toLowerCase() !== (username ?? '').toLowerCase();
 
   function renderDapperRatingsSection() {
     return (
@@ -1100,14 +1393,36 @@ export default function MapScreen({
       </View>
     );
   }
+  const canPinOrderLocation =
+    !isDapperMode &&
+    !requestInProgress &&
+    !isRequestMenuOpen &&
+    !isPreferencesOpen &&
+    !isProfileOpen &&
+    !isMenuOpen;
+  const showOrderSearchBox =
+    !isDapperMode &&
+    !requestInProgress &&
+    !isRequestMenuOpen &&
+    !isPreferencesOpen &&
+    !isProfileOpen;
+  const orderLocationSummary =
+    orderLocationMode === 'custom' && customOrderLabel
+      ? customOrderLabel
+      : location
+        ? 'Current location'
+        : 'Set dap location';
+
   return (
     <View style={styles.container}>
       <View style={styles.mapLayer}>
         <MapSurface
+          canPinLocation={canPinOrderLocation}
           ownLocation={ownMapLocation}
           counterpartLocation={counterpartMapLocation}
           isSheetOpen={isRequestMenuOpen || isDapperSheetOpen}
           mode={activeMode}
+          onSelectLocation={handlePinOrderLocation}
         />
       </View>
 
@@ -1249,13 +1564,233 @@ export default function MapScreen({
           </View>
         </View>
 
-        {error && !isMenuOpen && !isPreferencesOpen && !isProfileOpen ? (
+        {error &&
+        !isMenuOpen &&
+        !isPreferencesOpen &&
+        !isProfileOpen &&
+        !isPasswordModalOpen ? (
           <Text style={styles.modeError}>{error}</Text>
         ) : null}
         {locationTrackingError ? (
           <Text style={styles.locationTrackingError}>
             {locationTrackingError}
           </Text>
+        ) : null}
+
+        {showOrderSearchBox ? (
+          <View pointerEvents="box-none" style={styles.searchContainer}>
+            {isSearchBoxOpen ? (
+              <View style={styles.searchCard}>
+                <View style={styles.searchCardHeader}>
+                  <Text style={styles.searchCardTitle}>Set dap location</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => {
+                      setIsSearchBoxOpen(false);
+                      setSearchError(null);
+                    }}
+                  >
+                    <Text style={styles.searchCloseText}>Close</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.searchInputRow}>
+                  <View style={styles.uberPinSquare} />
+                  <TextInput
+                    ref={searchInputRef}
+                    autoCorrect={false}
+                    onChangeText={(text) => {
+                      setSearchQuery(text);
+                      setSearchError(null);
+                    }}
+                    placeholder="Search address or place"
+                    placeholderTextColor="#777777"
+                    returnKeyType="search"
+                    style={styles.searchInput}
+                    value={searchQuery}
+                  />
+                  {isSearchingLocations ? (
+                    <ActivityIndicator color="#000000" size="small" />
+                  ) : searchQuery.length > 0 ? (
+                    <Pressable
+                      accessibilityLabel="Clear search"
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => {
+                        setSearchQuery('');
+                        setSearchResults([]);
+                        setSearchError(null);
+                      }}
+                    >
+                      <Text style={styles.searchClearGlyph}>✕</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                <View style={styles.searchOptionsList}>
+                  <View
+                    style={[
+                      styles.searchOptionRow,
+                      orderLocationMode === 'custom' &&
+                        styles.searchOptionRowActive,
+                    ]}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => {
+                        setSearchError(null);
+                        searchInputRef.current?.focus();
+                      }}
+                      style={styles.searchOptionMainPressable}
+                    >
+                      <View style={styles.searchOptionIconBox}>
+                        <View style={styles.uberPinSquare} />
+                      </View>
+                      <View style={styles.searchOptionTextCol}>
+                        <Text style={styles.searchOptionTitle}>
+                          Set location by searching
+                        </Text>
+                        <Text style={styles.searchOptionSubtitle}>
+                          Type a place above or pin directly on the map
+                        </Text>
+                      </View>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      hitSlop={6}
+                      onPress={() => {
+                        setIsSearchBoxOpen(false);
+                        setIsPinpointNoticeVisible(true);
+                      }}
+                      style={styles.pinMapChip}
+                    >
+                      <Text style={styles.pinMapChipText}>Pin map</Text>
+                    </Pressable>
+                  </View>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isLocatingCurrent}
+                    onPress={() => void handleUseCurrentLocation()}
+                    style={[
+                      styles.searchOptionRow,
+                      orderLocationMode === 'current' &&
+                        location !== null &&
+                        styles.searchOptionRowActive,
+                    ]}
+                  >
+                    <View style={styles.searchOptionIconCircle}>
+                      {isLocatingCurrent ? (
+                        <ActivityIndicator color="#000000" size="small" />
+                      ) : (
+                        <View style={styles.currentLocationDot} />
+                      )}
+                    </View>
+                    <View style={styles.searchOptionTextCol}>
+                      <Text style={styles.searchOptionTitle}>
+                        Use current location
+                      </Text>
+                      <Text style={styles.searchOptionSubtitle}>
+                        {location
+                          ? 'Follow your live device GPS'
+                          : 'Enable GPS to center on you'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                </View>
+
+                {searchError ? (
+                  <Text style={styles.searchErrorText}>{searchError}</Text>
+                ) : null}
+
+                {searchResults.length > 0 ? (
+                  <ScrollView
+                    bounces={false}
+                    keyboardShouldPersistTaps="handled"
+                    style={styles.searchResultsScroll}
+                  >
+                    {searchResults.map((result) => (
+                      <Pressable
+                        key={result.id}
+                        accessibilityRole="button"
+                        onPress={() => handleSelectSearchResult(result)}
+                        style={styles.searchResultRow}
+                      >
+                        <View style={styles.searchResultPin} />
+                        <View style={styles.searchResultTextCol}>
+                          <Text numberOfLines={1} style={styles.searchResultTitle}>
+                            {result.title}
+                          </Text>
+                          {result.subtitle ? (
+                            <Text
+                              numberOfLines={1}
+                              style={styles.searchResultSubtitle}
+                            >
+                              {result.subtitle}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : searchQuery.trim().length >= 2 &&
+                  !isSearchingLocations &&
+                  !searchError ? (
+                  <Text style={styles.searchEmptyText}>
+                    No places found. Try another search or tap Pin map.
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <View style={styles.searchBarRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setIsPinpointNoticeVisible(false);
+                    setIsSearchBoxOpen(true);
+                    setTimeout(() => searchInputRef.current?.focus(), 60);
+                  }}
+                  style={styles.searchBarPill}
+                >
+                  <View
+                    style={
+                      orderLocationMode === 'custom'
+                        ? styles.uberPinSquare
+                        : styles.currentLocationDot
+                    }
+                  />
+                  <Text numberOfLines={1} style={styles.searchBarText}>
+                    {orderLocationSummary}
+                  </Text>
+                  <View style={styles.searchBarBadge}>
+                    <Text style={styles.searchBarBadgeText}>
+                      {orderLocationMode === 'custom' ? 'Pinned' : 'Search'}
+                    </Text>
+                  </View>
+                </Pressable>
+                {orderLocationMode === 'custom' ? (
+                  <Pressable
+                    accessibilityLabel="Clear pinned location"
+                    accessibilityRole="button"
+                    onPress={handleClearPinnedLocation}
+                    style={styles.clearPinPill}
+                  >
+                    <Text style={styles.clearPinText}>✕</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            )}
+
+            {isPinpointNoticeVisible && !isSearchBoxOpen ? (
+              <View style={styles.pinHintPill}>
+                <Text style={styles.pinHintText}>
+                  Tap anywhere on the map to drop your pin
+                </Text>
+              </View>
+            ) : null}
+          </View>
         ) : null}
 
         <View style={styles.bottomActions}>
@@ -1373,6 +1908,34 @@ export default function MapScreen({
             </View>
             {dapRequest.status === 'idle' || dapRequest.status === 'failed' ? (
               <>
+                <View style={styles.sheetLocationRow}>
+                  <View style={styles.sheetLocationLeft}>
+                    <View
+                      style={
+                        orderLocationMode === 'custom'
+                          ? styles.uberPinSquare
+                          : styles.currentLocationDot
+                      }
+                    />
+                    <Text numberOfLines={1} style={styles.sheetLocationText}>
+                      {orderLocationMode === 'custom' && customOrderLabel
+                        ? customOrderLabel
+                        : location
+                          ? 'Using current location'
+                          : 'Current location (or set on map)'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={6}
+                    onPress={() => {
+                      closeRequestMenu();
+                      setIsSearchBoxOpen(true);
+                    }}
+                  >
+                    <Text style={styles.sheetLocationChangeText}>Change</Text>
+                  </Pressable>
+                </View>
                 {requestLocationError || dapRequest.error ? (
                   <Text style={styles.matchingError}>
                     {requestLocationError ?? dapRequest.error}
@@ -1794,11 +2357,7 @@ export default function MapScreen({
                   value={profileUsername}
                 />
 
-                {authProvider !== 'local' ? (
-                  <Text style={styles.steamSecurityNote}>
-                    Signed in with {authProvider === 'strava' ? 'Strava' : 'Steam'}. Password changes are managed by your provider.
-                  </Text>
-                ) : (
+                {isUsernameChanged && authProvider === 'local' ? (
                   <>
                     <Text style={styles.inputLabel}>Current Password</Text>
                     <TextInput
@@ -1809,46 +2368,14 @@ export default function MapScreen({
                         setProfileError(null);
                         setProfileSuccess(null);
                       }}
-                      placeholder="Required to change username or password"
+                      placeholder="Required to confirm username change"
                       placeholderTextColor="#888888"
                       secureTextEntry
                       style={styles.profileInput}
                       value={currentPassword}
                     />
-
-                    <Text style={styles.inputLabel}>New Password</Text>
-                    <TextInput
-                      autoComplete="new-password"
-                      editable={!isSavingProfile}
-                      onChangeText={(text) => {
-                        setNewPassword(text);
-                        setProfileError(null);
-                        setProfileSuccess(null);
-                      }}
-                      placeholder="Leave blank to keep current password"
-                      placeholderTextColor="#888888"
-                      secureTextEntry
-                      style={styles.profileInput}
-                      value={newPassword}
-                    />
-
-                    <Text style={styles.inputLabel}>Confirm New Password</Text>
-                    <TextInput
-                      autoComplete="new-password"
-                      editable={!isSavingProfile}
-                      onChangeText={(text) => {
-                        setConfirmPassword(text);
-                        setProfileError(null);
-                        setProfileSuccess(null);
-                      }}
-                      placeholder="Re-enter new password"
-                      placeholderTextColor="#888888"
-                      secureTextEntry
-                      style={styles.profileInput}
-                      value={confirmPassword}
-                    />
                   </>
-                )}
+                ) : null}
 
                 {profileError ? (
                   <Text style={styles.profileErrorText}>{profileError}</Text>
@@ -1874,10 +2401,169 @@ export default function MapScreen({
                     <Text style={styles.confirmButtonText}>Save Profile</Text>
                   )}
                 </Pressable>
+
+                {authProvider !== 'local' ? (
+                  <Text style={styles.steamSecurityNote}>
+                    Signed in with {authProvider === 'strava' ? 'Strava' : 'Steam'}. Password changes are managed by your provider.
+                  </Text>
+                ) : (
+                  <View style={styles.changePasswordSection}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={openPasswordModal}
+                      style={({ pressed }) => [
+                        styles.changePasswordCard,
+                        pressed && styles.changePasswordCardPressed,
+                      ]}
+                    >
+                      <View style={styles.changePasswordCardContent}>
+                        <Text style={styles.changePasswordCardTitle}>
+                          Change Password
+                        </Text>
+                        <Text style={styles.changePasswordCardSubtitle}>
+                          Update your account password
+                        </Text>
+                      </View>
+                      <View style={styles.changePasswordArrowContainer}>
+                        <Text style={styles.changePasswordArrow}>→</Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                )}
               </View>
 
               {!isDapperMode ? renderDapperRatingsSection() : null}
             </ScrollView>
+          </Animated.View>
+        ) : null}
+
+        {isPasswordModalOpen ? (
+          <Animated.View
+            style={[
+              styles.passwordModalBackdrop,
+              {
+                opacity: passwordSheetProgress,
+              },
+            ]}
+          >
+            <Pressable
+              accessibilityLabel="Dismiss change password sheet"
+              onPress={closePasswordModal}
+              style={StyleSheet.absoluteFill}
+            />
+            <Animated.View
+              style={[
+                styles.passwordSheet,
+                {
+                  height: passwordSheetHeight,
+                  transform: [{ translateY: passwordSheetTranslateY }],
+                },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isUpdatingPassword}
+                  onPress={closePasswordModal}
+                  style={styles.sheetCloseButton}
+                >
+                  <Text style={styles.sheetCloseText}>← Back</Text>
+                </Pressable>
+                <Text style={styles.sheetTitle}>Change Password</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isUpdatingPassword}
+                  onPress={closeAllProfile}
+                  style={styles.sheetCloseButton}
+                >
+                  <Text style={styles.sheetCloseText}>Close</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView
+                bounces={false}
+                contentContainerStyle={styles.passwordScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.passwordSubtitle}>
+                  Enter your current password and choose a new password (min. 8 characters).
+                </Text>
+
+                <Text style={styles.inputLabel}>Current Password</Text>
+                <TextInput
+                  autoComplete="current-password"
+                  editable={!isUpdatingPassword}
+                  onChangeText={(text) => {
+                    setPasswordCurrent(text);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  placeholder="Enter current password"
+                  placeholderTextColor="#888888"
+                  secureTextEntry
+                  style={styles.profileInput}
+                  value={passwordCurrent}
+                />
+
+                <Text style={styles.inputLabel}>New Password</Text>
+                <TextInput
+                  autoComplete="new-password"
+                  editable={!isUpdatingPassword}
+                  onChangeText={(text) => {
+                    setPasswordNew(text);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  placeholder="At least 8 characters"
+                  placeholderTextColor="#888888"
+                  secureTextEntry
+                  style={styles.profileInput}
+                  value={passwordNew}
+                />
+
+                <Text style={styles.inputLabel}>Confirm New Password</Text>
+                <TextInput
+                  autoComplete="new-password"
+                  editable={!isUpdatingPassword}
+                  onChangeText={(text) => {
+                    setPasswordConfirm(text);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  placeholder="Re-enter new password"
+                  placeholderTextColor="#888888"
+                  secureTextEntry
+                  style={styles.profileInput}
+                  value={passwordConfirm}
+                />
+
+                {passwordError ? (
+                  <Text style={styles.profileErrorText}>{passwordError}</Text>
+                ) : null}
+                {passwordSuccess ? (
+                  <Text style={styles.profileSuccessText}>
+                    {passwordSuccess}
+                  </Text>
+                ) : null}
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isUpdatingPassword}
+                  onPress={() => void handleUpdatePassword()}
+                  style={[
+                    styles.confirmButton,
+                    isUpdatingPassword && styles.disabledButton,
+                  ]}
+                >
+                  {isUpdatingPassword ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.confirmButtonText}>Update Password</Text>
+                  )}
+                </Pressable>
+              </ScrollView>
+            </Animated.View>
           </Animated.View>
         ) : null}
 
@@ -2433,7 +3119,279 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 18,
+    marginBottom: 12,
+  },
+  sheetLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+    backgroundColor: '#f5f5f5',
+  },
+  sheetLocationLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sheetLocationText: {
+    flex: 1,
+    color: '#111111',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  sheetLocationChangeText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  searchContainer: {
+    position: 'absolute',
+    top: 78,
+    right: 16,
+    left: 16,
+    zIndex: 1101,
+    elevation: 11,
+    gap: 8,
+  },
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchBarPill: {
+    flex: 1,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.97)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  searchBarText: {
+    flex: 1,
+    color: '#000000',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  searchBarBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    backgroundColor: '#f1f1f1',
+  },
+  searchBarBadgeText: {
+    color: '#000000',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  clearPinPill: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.97)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  clearPinText: {
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  searchCard: {
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 9,
+    gap: 10,
+  },
+  searchCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  searchCardTitle: {
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  searchCloseText: {
+    color: '#555555',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  searchInputRow: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    backgroundColor: '#f3f3f3',
+  },
+  searchInput: {
+    flex: 1,
+    height: 42,
+    color: '#000000',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  searchClearGlyph: {
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: 4,
+  },
+  uberPinSquare: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    backgroundColor: '#000000',
+  },
+  currentLocationDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#000000',
+  },
+  searchOptionsList: {
+    gap: 8,
+  },
+  searchOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#ececec',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+  },
+  searchOptionRowActive: {
+    borderColor: '#000000',
+    backgroundColor: '#fafafa',
+  },
+  searchOptionMainPressable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  searchOptionIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f3f3',
+  },
+  searchOptionIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f3f3',
+  },
+  searchOptionTextCol: {
+    flex: 1,
+    gap: 2,
+  },
+  searchOptionTitle: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  searchOptionSubtitle: {
+    color: '#666666',
+    fontSize: 12,
+  },
+  pinMapChip: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#000000',
+  },
+  pinMapChipText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  searchErrorText: {
+    color: '#ee4d4d',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  searchResultsScroll: {
+    maxHeight: 200,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#ececec',
+  },
+  searchResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#f0f0f0',
+  },
+  searchResultPin: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#000000',
+  },
+  searchResultTextCol: {
+    flex: 1,
+    gap: 2,
+  },
+  searchResultTitle: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  searchResultSubtitle: {
+    color: '#666666',
+    fontSize: 12,
+  },
+  searchEmptyText: {
+    color: '#666666',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 8,
+  },
+  pinHintPill: {
+    alignSelf: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+  },
+  pinHintText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   sheetTitle: {
     color: '#000000',
@@ -2877,23 +3835,105 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
+    gap: 8,
+    flexWrap: 'wrap',
   },
   sectionTitle: {
     color: '#000000',
     fontFamily: displayFontFamily,
     fontSize: 16,
     fontWeight: '700',
+    flexShrink: 1,
   },
   securityBadge: {
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 8,
     backgroundColor: '#ececec',
+    flexShrink: 0,
   },
   securityBadgeText: {
     color: '#000000',
     fontSize: 11,
     fontWeight: '700',
+  },
+  changePasswordSection: {
+    marginTop: 14,
+  },
+  changePasswordCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#ececec',
+  },
+  changePasswordCardPressed: {
+    backgroundColor: '#f0f0f0',
+  },
+  changePasswordCardContent: {
+    flex: 1,
+    marginRight: 12,
+  },
+  changePasswordCardTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  changePasswordCardSubtitle: {
+    color: '#666666',
+    fontSize: 12,
+  },
+  changePasswordArrowContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ececec',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  changePasswordArrow: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  passwordModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    zIndex: 1115,
+    justifyContent: 'flex-end',
+  },
+  passwordSheet: {
+    width: '100%',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -5 },
+    elevation: 22,
+  },
+  passwordScrollContent: {
+    paddingBottom: 32,
+    gap: 4,
+  },
+  passwordSubtitle: {
+    color: '#666666',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 8,
   },
   inputLabel: {
     color: '#555555',
