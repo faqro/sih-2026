@@ -88,15 +88,17 @@ export default function App() {
 
   if (user?.accountType === 'user') {
     return (
-      <>
-        <StatusBar style="dark" />
-        <UserMapScreen
-          error={error}
-          isSubmitting={isSubmitting}
-          onDeleteAccount={removeAccount}
-          onSignOut={() => setUser(null)}
-        />
-      </>
+      <View style={styles.page}>
+        <View style={styles.app}>
+          <StatusBar style="dark" />
+          <UserMapScreen
+            error={error}
+            isSubmitting={isSubmitting}
+            onDeleteAccount={removeAccount}
+            onSignOut={() => setUser(null)}
+          />
+        </View>
+      </View>
     );
   }
 
