@@ -31,6 +31,9 @@ import {
   type AuthUser,
   type ChessSsoStatusResponse,
 } from './src/api/auth';
+import AnimatedDapHands, {
+  type AnimatedDapHandsHandle,
+} from './src/components/AnimatedDapHands';
 import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
   type OnboardingAction,
@@ -118,6 +121,7 @@ export default function App() {
   const handledChessCodesRef = useRef<Set<string>>(new Set());
   const chessAttemptIdRef = useRef(0);
   const isMountedRef = useRef(true);
+  const formDapHandsRef = useRef<AnimatedDapHandsHandle>(null);
 
   const isLogin = mode === 'login';
 
@@ -279,12 +283,16 @@ export default function App() {
     setError(err instanceof Error ? err.message : fallbackMessage);
   }
 
-  async function submit() {
+  async function submit(overrideUser?: string, overridePass?: string) {
+    const finalUser = overrideUser ?? username;
+    const finalPass = overridePass ?? password;
+
     setError(null);
     setIsSubmitting(true);
+    void formDapHandsRef.current?.triggerDap();
 
     try {
-      const result = await authenticate(mode, username, password);
+      const result = await authenticate(mode, finalUser, finalPass);
       saveAuthToken(result.token);
       setUser({ ...result.user, token: result.token });
       setPassword('');
@@ -302,6 +310,7 @@ export default function App() {
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
     setError(null);
+    formDapHandsRef.current?.reset();
   }
 
   function openAuthForm(nextMode: AuthMode) {
@@ -528,7 +537,7 @@ export default function App() {
         <SafeAreaView style={styles.app}>
           <StatusBar style="dark" />
           <View style={styles.loadingState}>
-            <ActivityIndicator color="#314b9a" size="large" />
+            <ActivityIndicator color="#000000" size="large" />
             <Text style={styles.loadingText}>Restoring your session...</Text>
           </View>
         </SafeAreaView>
@@ -652,12 +661,7 @@ export default function App() {
             </View>
 
             <View style={styles.claspedHandsContainer}>
-              <Image
-                accessibilityLabel="Two hands clasping in a dap"
-                resizeMode="contain"
-                source={require('./assets/dap-hands-clasped.png')}
-                style={styles.claspedHandsImage}
-              />
+              <AnimatedDapHands ref={formDapHandsRef} />
             </View>
 
             <Text style={styles.authSectionTitle}>
@@ -741,18 +745,13 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     alignItems: 'center',
-    backgroundColor: '#edf1f8',
+    backgroundColor: '#ffffff',
   },
   app: {
     flex: 1,
     width: '100%',
     maxWidth: 480,
-    backgroundColor: '#f9fafc',
-    shadowColor: '#1e293b',
-    shadowOpacity: 0.12,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
+    backgroundColor: '#ffffff',
   },
   welcomeApp: {
     backgroundColor: '#ffffff',
@@ -764,8 +763,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   loadingText: {
-    color: '#6f7a90',
-    fontSize: 14,
+    color: '#000000',
+    fontSize: 15,
     fontWeight: '600',
   },
   keyboardAvoider: {
@@ -855,7 +854,7 @@ const styles = StyleSheet.create({
     marginBottom: 22,
   },
   error: {
-    color: '#e53935',
+    color: '#ee4d4d',
     fontFamily: displayFontFamily,
     fontSize: 13,
     fontWeight: '500',
@@ -880,6 +879,7 @@ const styles = StyleSheet.create({
   },
   primaryButtonPressed: {
     opacity: 0.82,
+    transform: [{ scale: 0.98 }],
   },
   primaryButtonDisabled: {
     opacity: 0.65,
@@ -887,8 +887,8 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#ffffff',
     fontFamily: displayFontFamily,
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '700',
     letterSpacing: -0.4,
   },
   modePrompt: {

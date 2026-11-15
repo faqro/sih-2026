@@ -51,7 +51,7 @@ function MapSurface({ location, mode }: MapSurfaceProps) {
     ? [location.latitude, location.longitude]
     : DEFAULT_CENTER;
   const initialZoom = location ? ACTIVE_ZOOM : DEFAULT_ZOOM;
-  const markerFillColor = mode === 'dapper' ? '#314b9a' : '#000000';
+  const markerFillColor = '#000000';
 
   return (
     <MapContainer

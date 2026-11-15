@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
   },
   dapperMarkerDot: {
-    backgroundColor: '#314b9a',
+    backgroundColor: '#000000',
   },
 });
 
