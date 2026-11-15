@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 
 import type { AuthMode } from '../api/auth';
+import BrandLogo from '../components/BrandLogo';
 
 const displayFontFamily = Platform.select({
   web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -197,7 +198,7 @@ export default function AuthFlowScreen({
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.welcomeTitle}>Welcome to</Text>
-              <Text style={styles.brandTitle}>UberDaps</Text>
+              <BrandLogo size={84} />
             </View>
 
             {/* Back button (fades in when auth form is active) */}
@@ -533,14 +534,6 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     lineHeight: 44,
     letterSpacing: -0.9,
-  },
-  brandTitle: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 42,
-    fontWeight: '700',
-    lineHeight: 46,
-    letterSpacing: -1.1,
   },
   backButtonWrapper: {
     paddingTop: 6,

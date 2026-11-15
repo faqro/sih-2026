@@ -28,8 +28,16 @@
       ]
     ],
     "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro"
+      "bundler": "metro",
+      "output": "single",
+      "name": "UberDaps",
+      "shortName": "UberDaps",
+      "description": "Find a nearby dapper for your next handshake.",
+      "themeColor": "#000000",
+      "backgroundColor": "#ffffff",
+      "display": "standalone",
+      "startUrl": "/",
+      "scope": "/"
     }
   }
 }

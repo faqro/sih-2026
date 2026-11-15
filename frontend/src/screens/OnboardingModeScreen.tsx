@@ -9,6 +9,7 @@ import {
 import { useState } from 'react';
 
 import type { AppMode, DapService } from '../api/auth';
+import BrandLogo from '../components/BrandLogo';
 
 export type OnboardingAction = AppMode | 'skip';
 
@@ -77,7 +78,7 @@ export default function OnboardingModeScreen({
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.content}>
         <View style={styles.topRow}>
-          <Text style={styles.brandTitle}>UberDaps</Text>
+          <BrandLogo size={56} />
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting}
@@ -227,12 +228,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 24,
-  },
-  brandTitle: {
-    color: '#000000',
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.6,
   },
   signOutLink: {
     color: '#6f7a90',

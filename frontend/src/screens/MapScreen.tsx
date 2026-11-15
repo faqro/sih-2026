@@ -34,6 +34,11 @@ const displayFontFamily = Platform.select({
 
 const dapOptions = ['UberDap', 'UberDap Plus', 'UberDap Deluxe'] as const;
 type DapOption = (typeof dapOptions)[number];
+const dapOptionPrices: Record<DapOption, string> = {
+  UberDap: '$21.99',
+  'UberDap Plus': '$36.99',
+  'UberDap Deluxe': '$124.99',
+};
 
 const DAP_DETAILS: Record<
   DapOption,
@@ -1040,6 +1045,9 @@ export default function MapScreen({
                           </Text>
                         </View>
                         <View style={styles.optionRight}>
+                          <Text style={styles.optionPrice}>
+                            {dapOptionPrices[option]}
+                          </Text>
                           <Text style={styles.optionTime}>{details.time}</Text>
                           <View
                             style={[
@@ -1934,6 +1942,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   optionText: {
+    flex: 1,
     color: '#000000',
     fontSize: 15,
     fontWeight: '600',
@@ -1941,6 +1950,12 @@ const styles = StyleSheet.create({
   optionTextSelected: {
     color: '#000000',
     fontWeight: '700',
+  },
+  optionPrice: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 14,
+    fontWeight: '800',
   },
   confirmButton: {
     minHeight: 52,

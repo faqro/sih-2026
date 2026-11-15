@@ -1,0 +1,18 @@
+{
+  "name": "UberDaps",
+  "short_name": "UberDaps",
+  "description": "Find a nearby dapper for your next handshake.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/UberDaps-v1.jpg",
+      "sizes": "2000x2000",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
