@@ -168,6 +168,7 @@ export default function DapDecibelMeasurer({
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
     function analyze() {
+      if (isSuccessRef.current) return;
       const activeAnalyser = analyserRef.current;
       if (!activeAnalyser) return;
 
@@ -201,8 +202,9 @@ export default function DapDecibelMeasurer({
         peakDbRef.current = computedDb;
         setPeakDb(computedDb);
 
-        if (computedDb >= targetDb && !isSuccessRef.current) {
+        if (computedDb > targetDb && !isSuccessRef.current) {
           triggerSuccess(computedDb);
+          return;
         }
       }
 
@@ -213,28 +215,27 @@ export default function DapDecibelMeasurer({
   }
 
   function triggerSuccess(achievedDb: number) {
-    setIsSuccess(true);
+    if (isSuccessRef.current) return;
     isSuccessRef.current = true;
-    onSuccessfulDap?.(achievedDb);
+    setIsSuccess(true);
+    peakDbRef.current = achievedDb;
+    setPeakDb(achievedDb);
+    setCurrentDb(achievedDb);
 
-    Animated.sequence([
-      Animated.timing(pulseAnim, {
-        toValue: 1.08,
-        duration: 180,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }),
-      Animated.timing(pulseAnim, {
-        toValue: 1,
-        duration: 220,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }),
-    ]).start();
+    if (decayTimeoutRef.current) {
+      clearTimeout(decayTimeoutRef.current);
+      decayTimeoutRef.current = null;
+    }
+
+    stopAudio();
+    onSuccessfulDap?.(achievedDb);
+    onProceedToRating?.();
   }
 
   // Simulated dap tap for testing without live microphone
   function handleManualDapTap() {
+    if (isSuccessRef.current) return;
+
     const nextTap = tapCount + 1;
     setTapCount(nextTap);
 
@@ -266,8 +267,9 @@ export default function DapDecibelMeasurer({
       peakDbRef.current = simulatedDb;
       setPeakDb(simulatedDb);
 
-      if (simulatedDb >= targetDb && !isSuccessRef.current) {
+      if (simulatedDb > targetDb && !isSuccessRef.current) {
         triggerSuccess(simulatedDb);
+        return;
       }
     }
 
@@ -276,6 +278,7 @@ export default function DapDecibelMeasurer({
       clearTimeout(decayTimeoutRef.current);
     }
     decayTimeoutRef.current = setTimeout(() => {
+      if (isSuccessRef.current) return;
       setCurrentDb(MIN_DB + 4);
       setBarHeights(Array.from({ length: BAR_COUNT }, () => 6 + Math.floor(Math.random() * 4)));
     }, 450);
@@ -321,8 +324,8 @@ export default function DapDecibelMeasurer({
         <View style={styles.ratingGroup}>
           <Text style={styles.ratingStars}>
             {dapperRatingCount === 0
-              ? '★ New Dapper'
-              : `★ ${(dapperRating ?? 5.0).toFixed(1)}`}
+              ? 'New Dapper'
+              : `${(dapperRating ?? 5.0).toFixed(1)} / 5`}
           </Text>
           {dapperRatingCount && dapperRatingCount > 0 ? (
             <Text style={styles.ratingCount}>
@@ -441,7 +444,7 @@ export default function DapDecibelMeasurer({
                   pressed && styles.dapButtonPressed,
                 ]}
               >
-                <Text style={styles.dapButtonText}>👏 Dap Up!</Text>
+                <Text style={styles.dapButtonText}>Dap Up!</Text>
               </Pressable>
 
               {micPermission !== 'listening' ? (
