@@ -31,6 +31,10 @@ type DapRequestState = {
   error: string | null;
 };
 
+type StartRequestOptions = {
+  useLiveLocation?: boolean;
+};
+
 type DapRequestController = DapRequestState & {
   cancelRequest: () => void;
   isRestoring: boolean;
@@ -38,6 +42,7 @@ type DapRequestController = DapRequestState & {
   startRequest: (
     service: string,
     location: { latitude: number; longitude: number },
+    options?: StartRequestOptions,
   ) => Promise<void>;
 };
 
@@ -66,6 +71,7 @@ export function useDapRequest(
   const isMountedRef = useRef(false);
   const isEnabledRef = useRef(enabled);
   const hasRestoredRef = useRef(false);
+  const useLiveLocationRef = useRef(true);
   isEnabledRef.current = enabled;
 
   const updateState = useCallback((update: (current: DapRequestState) => DapRequestState) => {
@@ -105,6 +111,7 @@ export function useDapRequest(
   const startLocationUpdates = useCallback(
     async (socket: WebSocket) => {
       if (
+        !useLiveLocationRef.current ||
         !isMountedRef.current ||
         !isEnabledRef.current ||
         socketRef.current !== socket ||
@@ -118,6 +125,11 @@ export function useDapRequest(
       locationStartSocketRef.current = socket;
 
       try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (permission.status !== 'granted') {
+          return;
+        }
+
         const subscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
@@ -209,6 +221,7 @@ export function useDapRequest(
       return;
     }
 
+    useLiveLocationRef.current = true;
     stopLocationUpdates();
     closeSocket(true);
     updateState(() => initialState);
@@ -216,6 +229,7 @@ export function useDapRequest(
 
   const resetRequest = useCallback(() => {
     if (stateRef.current.status === 'delivered' || stateRef.current.status === 'failed') {
+      useLiveLocationRef.current = true;
       stopLocationUpdates();
       closeSocket(false);
       updateState(() => initialState);
@@ -377,11 +391,13 @@ export function useDapRequest(
     async (
       service: string,
       location: { latitude: number; longitude: number },
+      options?: StartRequestOptions,
     ) => {
       if (!isEnabledRef.current || socketRef.current) {
         return;
       }
 
+      useLiveLocationRef.current = options?.useLiveLocation ?? true;
       updateState(() => ({
         ...initialState,
         status: 'connecting',

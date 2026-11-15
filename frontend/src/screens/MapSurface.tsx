@@ -116,6 +116,8 @@ export type MapSurfaceProps = {
   counterpartLocation: Coordinates | null;
   isSheetOpen: boolean;
   mode: AppMode;
+  canPinLocation?: boolean;
+  onSelectLocation?: (coordinates: Coordinates) => void;
 };
 
 function MapSurface({
@@ -123,6 +125,8 @@ function MapSurface({
   counterpartLocation,
   isSheetOpen,
   mode,
+  canPinLocation = false,
+  onSelectLocation,
 }: MapSurfaceProps) {
   const { height: viewportHeight, width: viewportWidth } =
     useWindowDimensions();
@@ -228,6 +232,11 @@ function MapSurface({
           }
         }
       }}
+      onPress={(event) => {
+        if (canPinLocation && onSelectLocation) {
+          onSelectLocation(event.nativeEvent.coordinate);
+        }
+      }}
       provider={PROVIDER_GOOGLE}
       showsMyLocationButton={false}
       showsUserLocation={false}
@@ -236,6 +245,12 @@ function MapSurface({
       {ownLocation ? (
         <Marker
           coordinate={ownLocation}
+          draggable={Boolean(canPinLocation && onSelectLocation)}
+          onDragEnd={(event) => {
+            if (canPinLocation && onSelectLocation) {
+              onSelectLocation(event.nativeEvent.coordinate);
+            }
+          }}
           pinColor="#000000"
           title="Your location"
         />

@@ -1,5 +1,5 @@
 import * as Location from 'expo-location';
-import { useEffect, useRef, useState } from 'react';
+import { type ComponentRef, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -33,6 +33,11 @@ import {
   type Coordinates,
   type DapperLocationFailureReason,
 } from '../location/dapperLocation';
+import {
+  reverseGeocodeLocation,
+  searchLocations,
+  type LocationSearchResult,
+} from '../location/locationSearch';
 import { useDapperLocationStream } from '../hooks/useDapperLocationStream';
 import MapSurface from './MapSurface';
 
@@ -155,6 +160,21 @@ export default function MapScreen({
   const [requestLocationError, setRequestLocationError] = useState<
     string | null
   >(null);
+  const [orderLocationMode, setOrderLocationMode] = useState<
+    'current' | 'custom'
+  >('current');
+  const [customOrderLocation, setCustomOrderLocation] =
+    useState<Coordinates | null>(null);
+  const [customOrderLabel, setCustomOrderLabel] = useState<string | null>(null);
+  const [isSearchBoxOpen, setIsSearchBoxOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<LocationSearchResult[]>(
+    [],
+  );
+  const [isSearchingLocations, setIsSearchingLocations] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [isLocatingCurrent, setIsLocatingCurrent] = useState(false);
+  const [isPinpointNoticeVisible, setIsPinpointNoticeVisible] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
@@ -200,6 +220,8 @@ export default function MapScreen({
   const activeModeRef = useRef(activeMode);
   const goOnlineRequestIdRef = useRef(0);
   const requestLocationRequestIdRef = useRef(0);
+  const searchInputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const reverseGeocodeIdRef = useRef(0);
   activeModeRef.current = activeMode;
   const sheetTranslateY = sheetProgress.interpolate({
     inputRange: [0, 1],
@@ -247,11 +269,15 @@ export default function MapScreen({
     isDapperMode && (offer !== null || activeDap !== null);
   const isOrderRequestStreamingLocation =
     dapRequest.status === 'connecting' || dapRequest.status === 'searching';
+  const activeOrderLocation =
+    orderLocationMode === 'custom' && customOrderLocation
+      ? customOrderLocation
+      : location;
   const ownMapLocation = isDapperMode
     ? dapperLocation ?? location
     : isOrderRequestStreamingLocation
-      ? dapRequest.userLocation ?? location
-      : location ?? dapRequest.userLocation;
+      ? dapRequest.userLocation ?? activeOrderLocation
+      : activeOrderLocation ?? dapRequest.userLocation;
   const counterpartMapLocation = isDapperMode
     ? activeDap?.location ?? offer?.location ?? null
     : dapRequest.status === 'matched'
@@ -371,6 +397,8 @@ export default function MapScreen({
       requestLocationRequestIdRef.current += 1;
       setIsRequestingLocation(false);
       setRequestLocationError(null);
+      setIsSearchBoxOpen(false);
+      setIsPinpointNoticeVisible(false);
     }
 
     if (activeMode !== 'order') {
@@ -379,6 +407,51 @@ export default function MapScreen({
       setIsRequestMenuOpen(false);
     }
   }, [activeMode, sheetProgress]);
+
+  useEffect(() => {
+    if (isDapperMode || !isSearchBoxOpen) {
+      return;
+    }
+
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setSearchResults([]);
+      setSearchError(null);
+      setIsSearchingLocations(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsSearchingLocations(true);
+    setSearchError(null);
+
+    const timeout = setTimeout(() => {
+      void searchLocations(trimmed, controller.signal)
+        .then((results) => {
+          if (!controller.signal.aborted && isMountedRef.current) {
+            setSearchResults(results);
+            setIsSearchingLocations(false);
+          }
+        })
+        .catch((err) => {
+          if (
+            controller.signal.aborted ||
+            (err instanceof Error && err.name === 'AbortError') ||
+            !isMountedRef.current
+          ) {
+            return;
+          }
+          setSearchResults([]);
+          setSearchError('Unable to search locations. Try again.');
+          setIsSearchingLocations(false);
+        });
+    }, 350);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [isDapperMode, isSearchBoxOpen, searchQuery]);
 
   function handleSelectMode(
     nextMode: AppMode,
@@ -844,6 +917,14 @@ export default function MapScreen({
     setRatingComment('');
     setRatingSubmitted(false);
     setRatingError(null);
+
+    if (orderLocationMode === 'custom' && customOrderLocation) {
+      void dapRequest.startRequest(selectedDap, customOrderLocation, {
+        useLiveLocation: false,
+      });
+      return;
+    }
+
     const requestId = ++requestLocationRequestIdRef.current;
     setIsRequestingLocation(true);
 
@@ -877,25 +958,26 @@ export default function MapScreen({
 
       if (!result.ok) {
         setRequestLocationError(
-          result.reason === 'permission-denied'
-            ? 'Allow location access to request an UberDap.'
-            : result.reason === 'services-disabled'
-              ? 'Enable location services to request an UberDap.'
-              : 'Unable to get your location. Try again.',
+          result.reason === 'permission-denied' ||
+            result.reason === 'services-disabled'
+            ? 'Location is off. Enable location or search/pinpoint a location on the map.'
+            : 'Unable to get your location. Try again or set a location on the map.',
         );
         return;
       }
 
       setLocation(result.coordinates);
       setLocationTrackingRevision((revision) => revision + 1);
-      void dapRequest.startRequest(selectedDap, result.coordinates);
+      void dapRequest.startRequest(selectedDap, result.coordinates, {
+        useLiveLocation: true,
+      });
     } catch {
       if (
         isMountedRef.current &&
         requestLocationRequestIdRef.current === requestId
       ) {
         setRequestLocationError(
-          'Unable to get your location. Check location services and try again.',
+          'Unable to get your location. Check location services or set a location on the map.',
         );
       }
     } finally {
@@ -906,6 +988,119 @@ export default function MapScreen({
         setIsRequestingLocation(false);
       }
     }
+  }
+
+  function handleSelectSearchResult(result: LocationSearchResult) {
+    setOrderLocationMode('custom');
+    setCustomOrderLocation(result.coordinates);
+    setCustomOrderLabel(result.label);
+    setRequestLocationError(null);
+    setSearchError(null);
+    setIsSearchBoxOpen(false);
+    setIsPinpointNoticeVisible(false);
+  }
+
+  function handlePinOrderLocation(coordinates: Coordinates) {
+    if (
+      isDapperMode ||
+      requestInProgress ||
+      isRequestMenuOpen ||
+      isPreferencesOpen ||
+      isProfileOpen
+    ) {
+      return;
+    }
+
+    setIsMenuOpen(false);
+    setIsSearchBoxOpen(false);
+    setIsPinpointNoticeVisible(false);
+    setOrderLocationMode('custom');
+    setCustomOrderLocation(coordinates);
+    setCustomOrderLabel(
+      `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}`,
+    );
+    setRequestLocationError(null);
+    setSearchError(null);
+
+    const geocodeId = ++reverseGeocodeIdRef.current;
+    void reverseGeocodeLocation(coordinates).then((label) => {
+      if (
+        label &&
+        isMountedRef.current &&
+        reverseGeocodeIdRef.current === geocodeId
+      ) {
+        setCustomOrderLabel(label);
+      }
+    });
+  }
+
+  async function handleUseCurrentLocation() {
+    if (isLocatingCurrent) {
+      return;
+    }
+
+    setSearchError(null);
+    setIsLocatingCurrent(true);
+
+    try {
+      const result =
+        Platform.OS === 'web'
+          ? await resolveWebDapperOnlineLocation()
+          : await resolveDapperOnlineLocation(
+              {
+                hasServicesEnabledAsync: () =>
+                  Location.hasServicesEnabledAsync(),
+                getForegroundPermissionsAsync: () =>
+                  Location.getForegroundPermissionsAsync(),
+                requestForegroundPermissionsAsync: () =>
+                  Location.requestForegroundPermissionsAsync(),
+                getCurrentPositionAsync: () =>
+                  Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                  }),
+              },
+              { isNative: true },
+            );
+
+      if (!isMountedRef.current || activeModeRef.current !== 'order') {
+        return;
+      }
+
+      if (!result.ok) {
+        setSearchError(
+          result.reason === 'permission-denied' ||
+            result.reason === 'services-disabled'
+            ? 'Location is disabled. Enable location or search/pinpoint a spot instead.'
+            : 'Unable to get your current location.',
+        );
+        return;
+      }
+
+      setLocation(result.coordinates);
+      setOrderLocationMode('current');
+      setCustomOrderLocation(null);
+      setCustomOrderLabel(null);
+      setRequestLocationError(null);
+      setIsSearchBoxOpen(false);
+      setIsPinpointNoticeVisible(false);
+      setLocationTrackingRevision((revision) => revision + 1);
+    } catch {
+      if (isMountedRef.current) {
+        setSearchError('Unable to read your current location.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsLocatingCurrent(false);
+      }
+    }
+  }
+
+  function handleClearPinnedLocation() {
+    setOrderLocationMode('current');
+    setCustomOrderLocation(null);
+    setCustomOrderLabel(null);
+    setRequestLocationError(null);
+    setIsPinpointNoticeVisible(false);
   }
 
   async function submitCrispinessRating() {
@@ -1069,14 +1264,36 @@ export default function MapScreen({
       </View>
     );
   }
+  const canPinOrderLocation =
+    !isDapperMode &&
+    !requestInProgress &&
+    !isRequestMenuOpen &&
+    !isPreferencesOpen &&
+    !isProfileOpen &&
+    !isMenuOpen;
+  const showOrderSearchBox =
+    !isDapperMode &&
+    !requestInProgress &&
+    !isRequestMenuOpen &&
+    !isPreferencesOpen &&
+    !isProfileOpen;
+  const orderLocationSummary =
+    orderLocationMode === 'custom' && customOrderLabel
+      ? customOrderLabel
+      : location
+        ? 'Current location'
+        : 'Set dap location';
+
   return (
     <View style={styles.container}>
       <View style={styles.mapLayer}>
         <MapSurface
+          canPinLocation={canPinOrderLocation}
           ownLocation={ownMapLocation}
           counterpartLocation={counterpartMapLocation}
           isSheetOpen={isRequestMenuOpen || isDapperSheetOpen}
           mode={activeMode}
+          onSelectLocation={handlePinOrderLocation}
         />
       </View>
 
@@ -1225,6 +1442,222 @@ export default function MapScreen({
           </Text>
         ) : null}
 
+        {showOrderSearchBox ? (
+          <View pointerEvents="box-none" style={styles.searchContainer}>
+            {isSearchBoxOpen ? (
+              <View style={styles.searchCard}>
+                <View style={styles.searchCardHeader}>
+                  <Text style={styles.searchCardTitle}>Set dap location</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => {
+                      setIsSearchBoxOpen(false);
+                      setSearchError(null);
+                    }}
+                  >
+                    <Text style={styles.searchCloseText}>Close</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.searchInputRow}>
+                  <View style={styles.uberPinSquare} />
+                  <TextInput
+                    ref={searchInputRef}
+                    autoCorrect={false}
+                    onChangeText={(text) => {
+                      setSearchQuery(text);
+                      setSearchError(null);
+                    }}
+                    placeholder="Search address or place"
+                    placeholderTextColor="#777777"
+                    returnKeyType="search"
+                    style={styles.searchInput}
+                    value={searchQuery}
+                  />
+                  {isSearchingLocations ? (
+                    <ActivityIndicator color="#000000" size="small" />
+                  ) : searchQuery.length > 0 ? (
+                    <Pressable
+                      accessibilityLabel="Clear search"
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => {
+                        setSearchQuery('');
+                        setSearchResults([]);
+                        setSearchError(null);
+                      }}
+                    >
+                      <Text style={styles.searchClearGlyph}>✕</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                <View style={styles.searchOptionsList}>
+                  <View
+                    style={[
+                      styles.searchOptionRow,
+                      orderLocationMode === 'custom' &&
+                        styles.searchOptionRowActive,
+                    ]}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => {
+                        setSearchError(null);
+                        searchInputRef.current?.focus();
+                      }}
+                      style={styles.searchOptionMainPressable}
+                    >
+                      <View style={styles.searchOptionIconBox}>
+                        <View style={styles.uberPinSquare} />
+                      </View>
+                      <View style={styles.searchOptionTextCol}>
+                        <Text style={styles.searchOptionTitle}>
+                          Set location by searching
+                        </Text>
+                        <Text style={styles.searchOptionSubtitle}>
+                          Type a place above or pin directly on the map
+                        </Text>
+                      </View>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      hitSlop={6}
+                      onPress={() => {
+                        setIsSearchBoxOpen(false);
+                        setIsPinpointNoticeVisible(true);
+                      }}
+                      style={styles.pinMapChip}
+                    >
+                      <Text style={styles.pinMapChipText}>Pin map</Text>
+                    </Pressable>
+                  </View>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isLocatingCurrent}
+                    onPress={() => void handleUseCurrentLocation()}
+                    style={[
+                      styles.searchOptionRow,
+                      orderLocationMode === 'current' &&
+                        location !== null &&
+                        styles.searchOptionRowActive,
+                    ]}
+                  >
+                    <View style={styles.searchOptionIconCircle}>
+                      {isLocatingCurrent ? (
+                        <ActivityIndicator color="#000000" size="small" />
+                      ) : (
+                        <View style={styles.currentLocationDot} />
+                      )}
+                    </View>
+                    <View style={styles.searchOptionTextCol}>
+                      <Text style={styles.searchOptionTitle}>
+                        Use current location
+                      </Text>
+                      <Text style={styles.searchOptionSubtitle}>
+                        {location
+                          ? 'Follow your live device GPS'
+                          : 'Enable GPS to center on you'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                </View>
+
+                {searchError ? (
+                  <Text style={styles.searchErrorText}>{searchError}</Text>
+                ) : null}
+
+                {searchResults.length > 0 ? (
+                  <ScrollView
+                    bounces={false}
+                    keyboardShouldPersistTaps="handled"
+                    style={styles.searchResultsScroll}
+                  >
+                    {searchResults.map((result) => (
+                      <Pressable
+                        key={result.id}
+                        accessibilityRole="button"
+                        onPress={() => handleSelectSearchResult(result)}
+                        style={styles.searchResultRow}
+                      >
+                        <View style={styles.searchResultPin} />
+                        <View style={styles.searchResultTextCol}>
+                          <Text numberOfLines={1} style={styles.searchResultTitle}>
+                            {result.title}
+                          </Text>
+                          {result.subtitle ? (
+                            <Text
+                              numberOfLines={1}
+                              style={styles.searchResultSubtitle}
+                            >
+                              {result.subtitle}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : searchQuery.trim().length >= 2 &&
+                  !isSearchingLocations &&
+                  !searchError ? (
+                  <Text style={styles.searchEmptyText}>
+                    No places found. Try another search or tap Pin map.
+                  </Text>
+                ) : null}
+              </View>
+            ) : (
+              <View style={styles.searchBarRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setIsMenuOpen(false);
+                    setIsPinpointNoticeVisible(false);
+                    setIsSearchBoxOpen(true);
+                    setTimeout(() => searchInputRef.current?.focus(), 60);
+                  }}
+                  style={styles.searchBarPill}
+                >
+                  <View
+                    style={
+                      orderLocationMode === 'custom'
+                        ? styles.uberPinSquare
+                        : styles.currentLocationDot
+                    }
+                  />
+                  <Text numberOfLines={1} style={styles.searchBarText}>
+                    {orderLocationSummary}
+                  </Text>
+                  <View style={styles.searchBarBadge}>
+                    <Text style={styles.searchBarBadgeText}>
+                      {orderLocationMode === 'custom' ? 'Pinned' : 'Search'}
+                    </Text>
+                  </View>
+                </Pressable>
+                {orderLocationMode === 'custom' ? (
+                  <Pressable
+                    accessibilityLabel="Clear pinned location"
+                    accessibilityRole="button"
+                    onPress={handleClearPinnedLocation}
+                    style={styles.clearPinPill}
+                  >
+                    <Text style={styles.clearPinText}>✕</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            )}
+
+            {isPinpointNoticeVisible && !isSearchBoxOpen ? (
+              <View style={styles.pinHintPill}>
+                <Text style={styles.pinHintText}>
+                  Tap anywhere on the map to drop your pin
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={styles.bottomActions}>
           {isDapperMode ? (
             <Text style={styles.dapperStatus}>
@@ -1340,6 +1773,34 @@ export default function MapScreen({
             </View>
             {dapRequest.status === 'idle' || dapRequest.status === 'failed' ? (
               <>
+                <View style={styles.sheetLocationRow}>
+                  <View style={styles.sheetLocationLeft}>
+                    <View
+                      style={
+                        orderLocationMode === 'custom'
+                          ? styles.uberPinSquare
+                          : styles.currentLocationDot
+                      }
+                    />
+                    <Text numberOfLines={1} style={styles.sheetLocationText}>
+                      {orderLocationMode === 'custom' && customOrderLabel
+                        ? customOrderLabel
+                        : location
+                          ? 'Using current location'
+                          : 'Current location (or set on map)'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={6}
+                    onPress={() => {
+                      closeRequestMenu();
+                      setIsSearchBoxOpen(true);
+                    }}
+                  >
+                    <Text style={styles.sheetLocationChangeText}>Change</Text>
+                  </Pressable>
+                </View>
                 {requestLocationError || dapRequest.error ? (
                   <Text style={styles.matchingError}>
                     {requestLocationError ?? dapRequest.error}
@@ -2380,7 +2841,279 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 18,
+    marginBottom: 12,
+  },
+  sheetLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+    backgroundColor: '#f5f5f5',
+  },
+  sheetLocationLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sheetLocationText: {
+    flex: 1,
+    color: '#111111',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  sheetLocationChangeText: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  searchContainer: {
+    position: 'absolute',
+    top: 78,
+    right: 16,
+    left: 16,
+    zIndex: 1101,
+    elevation: 11,
+    gap: 8,
+  },
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchBarPill: {
+    flex: 1,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.97)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  searchBarText: {
+    flex: 1,
+    color: '#000000',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  searchBarBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    backgroundColor: '#f1f1f1',
+  },
+  searchBarBadgeText: {
+    color: '#000000',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  clearPinPill: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.97)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  clearPinText: {
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  searchCard: {
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 9,
+    gap: 10,
+  },
+  searchCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  searchCardTitle: {
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  searchCloseText: {
+    color: '#555555',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  searchInputRow: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    backgroundColor: '#f3f3f3',
+  },
+  searchInput: {
+    flex: 1,
+    height: 42,
+    color: '#000000',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  searchClearGlyph: {
+    color: '#666666',
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: 4,
+  },
+  uberPinSquare: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    backgroundColor: '#000000',
+  },
+  currentLocationDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#000000',
+  },
+  searchOptionsList: {
+    gap: 8,
+  },
+  searchOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#ececec',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+  },
+  searchOptionRowActive: {
+    borderColor: '#000000',
+    backgroundColor: '#fafafa',
+  },
+  searchOptionMainPressable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  searchOptionIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f3f3',
+  },
+  searchOptionIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f3f3',
+  },
+  searchOptionTextCol: {
+    flex: 1,
+    gap: 2,
+  },
+  searchOptionTitle: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  searchOptionSubtitle: {
+    color: '#666666',
+    fontSize: 12,
+  },
+  pinMapChip: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#000000',
+  },
+  pinMapChipText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  searchErrorText: {
+    color: '#ee4d4d',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  searchResultsScroll: {
+    maxHeight: 200,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#ececec',
+  },
+  searchResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#f0f0f0',
+  },
+  searchResultPin: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#000000',
+  },
+  searchResultTextCol: {
+    flex: 1,
+    gap: 2,
+  },
+  searchResultTitle: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  searchResultSubtitle: {
+    color: '#666666',
+    fontSize: 12,
+  },
+  searchEmptyText: {
+    color: '#666666',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 8,
+  },
+  pinHintPill: {
+    alignSelf: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+  },
+  pinHintText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   sheetTitle: {
     color: '#000000',

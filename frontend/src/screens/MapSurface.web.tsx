@@ -1,5 +1,11 @@
 import { memo, useEffect, useRef } from 'react';
-import { CircleMarker, MapContainer, TileLayer, useMap } from 'react-leaflet';
+import {
+  CircleMarker,
+  MapContainer,
+  TileLayer,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import { StyleSheet } from 'react-native';
 
@@ -23,7 +29,30 @@ export type MapSurfaceProps = {
   counterpartLocation: Coordinates | null;
   isSheetOpen: boolean;
   mode: AppMode;
+  canPinLocation?: boolean;
+  onSelectLocation?: (coordinates: Coordinates) => void;
 };
+
+function MapClickHandler({
+  canPinLocation,
+  onSelectLocation,
+}: {
+  canPinLocation: boolean;
+  onSelectLocation?: (coordinates: Coordinates) => void;
+}) {
+  useMapEvents({
+    click(event) {
+      if (canPinLocation && onSelectLocation) {
+        onSelectLocation({
+          latitude: event.latlng.lat,
+          longitude: event.latlng.lng,
+        });
+      }
+    },
+  });
+
+  return null;
+}
 
 function MapViewportController({
   ownLocation,
@@ -71,7 +100,8 @@ function MapViewportController({
     }
     const location = ownLocation ?? counterpartLocation;
     if (location) {
-      map.setView([location.latitude, location.longitude], ACTIVE_ZOOM);
+      const targetZoom = Math.max(map.getZoom(), ACTIVE_ZOOM);
+      map.setView([location.latitude, location.longitude], targetZoom);
       if (isSheetOpen) {
         map.panBy([0, Math.floor(map.getSize().y / 4)], { animate: false });
       }
@@ -109,6 +139,8 @@ function MapSurface({
   ownLocation,
   counterpartLocation,
   isSheetOpen,
+  canPinLocation = false,
+  onSelectLocation,
 }: MapSurfaceProps) {
   const initialLocation = ownLocation ?? counterpartLocation;
   const initialCenter: LatLngExpression = initialLocation
@@ -122,12 +154,20 @@ function MapSurface({
       center={initialCenter}
       zoom={initialZoom}
       zoomControl={false}
-      style={styles.map}
+      style={{
+        height: '100%',
+        width: '100%',
+        cursor: canPinLocation ? 'crosshair' : undefined,
+      }}
     >
       <style>{UBER_BW_TILE_CSS}</style>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      <MapClickHandler
+        canPinLocation={canPinLocation}
+        onSelectLocation={onSelectLocation}
       />
       <MapViewportController
         ownLocation={ownLocation}
