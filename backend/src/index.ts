@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
@@ -38,6 +38,7 @@ type Coordinates = {
 
 type ActiveDapper = {
   username: string;
+  name: string | null;
   offeredServices: DapService[];
   crispinessRatingTotal: number;
   crispinessRatingCount: number;
@@ -171,9 +172,10 @@ app.post('/auth/signup', async (request, response) => {
   }
 
   try {
+    const hashedPassword = await hashPassword(credentials.password);
     const user = await User.create({
       username: credentials.username,
-      password: credentials.password,
+      password: hashedPassword,
       activeMode: 'order',
       hasCompletedOnboarding: false,
     });
@@ -215,11 +217,21 @@ app.post('/auth/login', async (request, response) => {
       return;
     }
 
-    if (credentials.password !== user.password) {
+    const passwordVerification = await verifyPassword(
+      credentials.password,
+      user.password,
+    );
+
+    if (!passwordVerification.valid) {
       response.status(401).json({
-        message: `Wrong password. Did you mean to write '${user.password}'?`,
+        message: 'Invalid username or password.',
       });
       return;
+    }
+
+    if (passwordVerification.needsRehash) {
+      user.password = await hashPassword(credentials.password);
+      await user.save();
     }
 
     sendAuthResponse(response, serializeUser(user));
@@ -477,6 +489,279 @@ app.get('/auth/me', async (request, response) => {
   }
 });
 
+app.patch('/auth/profile', async (request, response) => {
+  const userId = authenticateRequest(request, response);
+
+  if (!userId) {
+    return;
+  }
+
+  const body: unknown = request.body;
+  if (!isRecord(body)) {
+    response.status(400).json({ message: 'Invalid profile update payload.' });
+    return;
+  }
+
+  const hasName = 'name' in body;
+  const hasUsername = 'username' in body;
+  const hasNewPassword =
+    'newPassword' in body &&
+    typeof body.newPassword === 'string' &&
+    body.newPassword.length > 0;
+
+  if (!hasName && !hasUsername && !hasNewPassword) {
+    response.status(400).json({
+      message: 'Provide a name, username, or new password to update.',
+    });
+    return;
+  }
+
+  let nextName: string | null | undefined;
+  if (hasName) {
+    if (body.name !== null && typeof body.name !== 'string') {
+      response.status(400).json({ message: 'Name must be a valid string.' });
+      return;
+    }
+    const trimmedName = body.name === null ? '' : body.name.trim();
+    if (trimmedName.length > 60) {
+      response.status(400).json({
+        message: 'Name must be 60 characters or fewer.',
+      });
+      return;
+    }
+    nextName = trimmedName.length > 0 ? trimmedName : null;
+  }
+
+  let nextUsername: string | undefined;
+  if (hasUsername) {
+    if (typeof body.username !== 'string') {
+      response.status(400).json({ message: 'Username must be a string.' });
+      return;
+    }
+    const normalizedUsername = body.username.trim().toLowerCase();
+    if (!/^[a-z0-9_-]{3,30}$/.test(normalizedUsername)) {
+      response.status(400).json({
+        message:
+          'Username must be 3-30 letters, numbers, underscores, or hyphens.',
+      });
+      return;
+    }
+    nextUsername = normalizedUsername;
+  }
+
+  const newPassword = hasNewPassword ? (body.newPassword as string) : undefined;
+  if (
+    newPassword !== undefined &&
+    (newPassword.length < 8 || newPassword.length > 128)
+  ) {
+    response.status(400).json({
+      message: 'New password must be between 8 and 128 characters.',
+    });
+    return;
+  }
+
+  const currentPassword =
+    typeof body.currentPassword === 'string' ? body.currentPassword : '';
+
+  try {
+    const user = await User.findById(userId).select('+password');
+
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
+      return;
+    }
+
+    const isChangingUsername =
+      nextUsername !== undefined && nextUsername !== user.username;
+    const isLocalAccount = user.authProvider !== 'steam';
+
+    if (hasNewPassword && (!isLocalAccount || !user.password)) {
+      response.status(400).json({
+        message: 'Password changes are not available for Steam Sign-In accounts.',
+      });
+      return;
+    }
+
+    if (
+      (hasNewPassword || (isChangingUsername && isLocalAccount && user.password))
+    ) {
+      if (!currentPassword) {
+        response.status(401).json({
+          message:
+            'Enter your current password to update your username or password.',
+        });
+        return;
+      }
+
+      if (!user.password) {
+        response.status(401).json({
+          message: 'Current password verification failed.',
+        });
+        return;
+      }
+
+      const verification = await verifyPassword(currentPassword, user.password);
+      if (!verification.valid) {
+        response.status(401).json({
+          message: 'Current password is incorrect.',
+        });
+        return;
+      }
+    }
+
+    if (newPassword !== undefined && currentPassword === newPassword) {
+      response.status(400).json({
+        message: 'New password must be different from your current password.',
+      });
+      return;
+    }
+
+    if (isChangingUsername && nextUsername) {
+      const existingUser = await User.exists({
+        username: nextUsername,
+        _id: { $ne: user._id },
+      });
+      if (existingUser) {
+        response.status(409).json({ message: 'This username is already taken.' });
+        return;
+      }
+      user.username = nextUsername;
+    }
+
+    if (nextName !== undefined) {
+      user.name = nextName;
+    }
+
+    if (newPassword !== undefined) {
+      user.password = await hashPassword(newPassword);
+    }
+
+    await user.save();
+
+    const liveDapper = activeDappers.get(user.id);
+    if (liveDapper) {
+      liveDapper.username = user.username;
+      liveDapper.name = user.name ?? null;
+    }
+
+    const activeRequestId = activeRequestIdsByUser.get(user.id);
+    const activeRequest = activeRequestId
+      ? dapRequests.get(activeRequestId)
+      : undefined;
+    if (activeRequest) {
+      activeRequest.username = user.username;
+    }
+
+    sendAuthResponse(response, serializeUser(user));
+  } catch (error) {
+    if (isDuplicateUsernameError(error)) {
+      response.status(409).json({ message: 'This username is already taken.' });
+      return;
+    }
+
+    console.error('Unable to update user profile:', error);
+    response.status(500).json({ message: 'Unable to update profile.' });
+  }
+});
+
+app.get('/auth/ratings', async (request, response) => {
+  const userId = authenticateRequest(request, response);
+
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const user = await User.findById(userId).select(
+      'crispinessRatingTotal crispinessRatingCount',
+    );
+
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
+      return;
+    }
+
+    const [breakdownRows, recentDocs] = await Promise.all([
+      DapRating.aggregate<{ _id: number; count: number }>([
+        { $match: { dapperId: userId, rating: { $gte: 1, $lte: 5 } } },
+        { $group: { _id: '$rating', count: { $sum: 1 } } },
+      ]),
+      DapRating.find({ dapperId: userId, rating: { $ne: null } })
+        .sort({ ratedAt: -1, updatedAt: -1 })
+        .limit(25)
+        .lean(),
+    ]);
+
+    const breakdown: Record<1 | 2 | 3 | 4 | 5, number> = {
+      5: 0,
+      4: 0,
+      3: 0,
+      2: 0,
+      1: 0,
+    };
+    let ratedDocsCount = 0;
+    let ratedDocsSum = 0;
+
+    for (const row of breakdownRows) {
+      if (row._id >= 1 && row._id <= 5) {
+        const star = row._id as 1 | 2 | 3 | 4 | 5;
+        breakdown[star] = row.count;
+        ratedDocsCount += row.count;
+        ratedDocsSum += star * row.count;
+      }
+    }
+
+    const raterIds = [
+      ...new Set(
+        recentDocs
+          .map((doc) => doc.userId)
+          .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const raterUsers = raterIds.length
+      ? await User.find({ _id: { $in: raterIds } })
+          .select('name username steamUsername')
+          .lean()
+      : [];
+    const raterMap = new Map(
+      raterUsers.map((rater) => [
+        String(rater._id),
+        rater.name || rater.steamUsername || rater.username,
+      ]),
+    );
+
+    const totalRatings =
+      user.crispinessRatingCount > 0 ? user.crispinessRatingCount : ratedDocsCount;
+    const totalScore =
+      user.crispinessRatingCount > 0 ? user.crispinessRatingTotal : ratedDocsSum;
+    const averageRating =
+      totalRatings > 0 ? Number((totalScore / totalRatings).toFixed(2)) : null;
+
+    const recentRatings = recentDocs
+      .filter((doc): doc is typeof doc & { rating: number } => typeof doc.rating === 'number')
+      .map((doc) => ({
+        id: String(doc._id),
+        requestId: doc.requestId,
+        rating: doc.rating,
+        comment: doc.comment ?? null,
+        service: doc.service ?? null,
+        raterName:
+          raterMap.get(doc.userId) ?? doc.raterUsername ?? 'UberDaps Rider',
+        ratedAt: (doc.ratedAt ?? new Date()).toISOString(),
+      }));
+
+    response.status(200).json({
+      averageRating,
+      totalRatings,
+      breakdown,
+      recentRatings,
+    });
+  } catch (error) {
+    console.error('Unable to load dapper ratings:', error);
+    response.status(500).json({ message: 'Unable to load ratings.' });
+  }
+});
+
 app.patch('/auth/onboarding', async (request, response) => {
   const userId = authenticateRequest(request, response);
 
@@ -686,12 +971,29 @@ app.post('/dap-requests/:requestId/rating', async (request, response) => {
     return;
   }
 
+  let comment: string | null = null;
+  if ('comment' in body && body.comment !== null && body.comment !== undefined) {
+    if (typeof body.comment !== 'string') {
+      response.status(400).json({ message: 'Rating comment must be text.' });
+      return;
+    }
+    const trimmedComment = body.comment.trim();
+    if (trimmedComment.length > 240) {
+      response.status(400).json({
+        message: 'Rating comment must be 240 characters or fewer.',
+      });
+      return;
+    }
+    comment = trimmedComment.length > 0 ? trimmedComment : null;
+  }
+
   let ratingClaimed = false;
+  const ratedAt = new Date();
   try {
     const requestId = request.params.requestId;
     const ratingRecord = await DapRating.findOneAndUpdate(
       { requestId, userId, rating: null },
-      { $set: { rating: body.rating } },
+      { $set: { rating: body.rating, comment, ratedAt } },
       { new: true },
     );
 
@@ -708,6 +1010,16 @@ app.post('/dap-requests/:requestId/rating', async (request, response) => {
     }
     ratingClaimed = true;
 
+    if (ratingRecord.dapperId === userId) {
+      await DapRating.updateOne(
+        { requestId, userId, rating: body.rating },
+        { $set: { rating: null, comment: null, ratedAt: null } },
+      );
+      ratingClaimed = false;
+      response.status(403).json({ message: 'You cannot rate your own UberDap.' });
+      return;
+    }
+
     const dapperUser = await User.findByIdAndUpdate(
       ratingRecord.dapperId,
       {
@@ -722,7 +1034,7 @@ app.post('/dap-requests/:requestId/rating', async (request, response) => {
     if (!dapperUser) {
       await DapRating.updateOne(
         { requestId, userId, rating: body.rating },
-        { $set: { rating: null } },
+        { $set: { rating: null, comment: null, ratedAt: null } },
       );
       ratingClaimed = false;
       response.status(404).json({ message: 'The dapper account no longer exists.' });
@@ -730,15 +1042,31 @@ app.post('/dap-requests/:requestId/rating', async (request, response) => {
     }
     ratingClaimed = false;
 
+    const averageRating = Number(
+      (dapperUser.crispinessRatingTotal / dapperUser.crispinessRatingCount).toFixed(
+        2,
+      ),
+    );
     const dapper = activeDappers.get(dapperUser.id);
     if (dapper) {
       dapper.crispinessRatingTotal = dapperUser.crispinessRatingTotal;
       dapper.crispinessRatingCount = dapperUser.crispinessRatingCount;
+      sendWebSocketMessage(dapper.socket, {
+        type: 'rating_received',
+        requestId,
+        rating: body.rating,
+        comment,
+        service: ratingRecord.service ?? null,
+        crispinessRating: averageRating,
+        crispinessRatingCount: dapperUser.crispinessRatingCount,
+      });
     }
 
     response.status(200).json({
-      crispinessRating:
-        dapperUser.crispinessRatingTotal / dapperUser.crispinessRatingCount,
+      crispinessRating: averageRating,
+      crispinessRatingCount: dapperUser.crispinessRatingCount,
+      rating: body.rating,
+      comment,
     });
   } catch (error) {
     if (ratingClaimed) {
@@ -749,7 +1077,7 @@ app.post('/dap-requests/:requestId/rating', async (request, response) => {
             userId,
             rating: body.rating,
           },
-          { $set: { rating: null } },
+          { $set: { rating: null, comment: null, ratedAt: null } },
         );
       } catch (rollbackError) {
         console.error('Unable to release UberDap rating:', rollbackError);
@@ -814,7 +1142,7 @@ async function handleRealtimeMessage(
 
     session.isAuthenticating = true;
     const user = await User.findById(tokenUserId).select(
-      'activeMode username offeredServices crispinessRatingTotal crispinessRatingCount',
+      'activeMode username name offeredServices crispinessRatingTotal crispinessRatingCount',
     );
 
     if (!user) {
@@ -841,6 +1169,7 @@ async function handleRealtimeMessage(
       const previousDapper = getOrCreateDapper(
         user.id,
         user.username,
+        user.name ?? null,
         offeredServices,
         user.crispinessRatingTotal ?? 0,
         user.crispinessRatingCount ?? 0,
@@ -853,6 +1182,7 @@ async function handleRealtimeMessage(
       const dapper = getOrCreateDapper(
         user.id,
         user.username,
+        user.name ?? null,
         offeredServices,
         user.crispinessRatingTotal ?? 0,
         user.crispinessRatingCount ?? 0,
@@ -1295,7 +1625,9 @@ function sendUserRequestState(request: DapRequest): void {
       dapper: {
         id: request.dapperId,
         username: dapper?.username ?? 'Your dapper',
+        name: dapper?.name ?? null,
         crispinessRating: dapper ? getCrispinessRating(dapper) : 2.5,
+        crispinessRatingCount: dapper?.crispinessRatingCount ?? 0,
         location: dapper?.location ?? null,
       },
     });
@@ -1360,7 +1692,9 @@ function acceptDapperOffer(
     dapper: {
       id: dapperId,
       username: dapper.username,
+      name: dapper.name,
       crispinessRating: getCrispinessRating(dapper),
+      crispinessRatingCount: dapper.crispinessRatingCount,
       location: dapper.location,
     },
   });
@@ -1422,6 +1756,8 @@ async function deliverDap(
     requestId,
     userId: request.userId,
     dapperId,
+    service: request.service,
+    raterUsername: request.username,
   });
 
   sendWebSocketMessage(request.userSocket, {
@@ -1633,6 +1969,7 @@ function stopOrderLocationStream(userId: string, reason: string): void {
 function getOrCreateDapper(
   userId: string,
   username: string,
+  name: string | null,
   offeredServices: DapService[],
   crispinessRatingTotal: number,
   crispinessRatingCount: number,
@@ -1641,6 +1978,7 @@ function getOrCreateDapper(
   if (!dapper) {
     dapper = {
       username,
+      name,
       offeredServices,
       crispinessRatingTotal,
       crispinessRatingCount,
@@ -1653,6 +1991,7 @@ function getOrCreateDapper(
     activeDappers.set(userId, dapper);
   } else {
     dapper.username = username;
+    dapper.name = name;
     dapper.offeredServices = offeredServices;
     dapper.crispinessRatingTotal = crispinessRatingTotal;
     dapper.crispinessRatingCount = crispinessRatingCount;
@@ -1743,11 +2082,14 @@ function getTokenUserId(token: string): string | null {
 type SerializedUser = {
   id: string;
   username: string;
+  name: string | null;
   authProvider: AuthProvider;
   steamUsername: string | null;
   steamAvatar: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
+  crispinessRating: number | null;
+  crispinessRatingCount: number;
   hasCompletedOnboarding: boolean;
 };
 
@@ -1779,23 +2121,92 @@ function authenticateRequest(
 function serializeUser(user: {
   id: string;
   username: string;
+  name?: string | null;
   authProvider?: AuthProvider;
   steamUsername?: string | null;
   steamAvatar?: string | null;
   activeMode?: AppMode;
   offeredServices?: DapService[];
+  crispinessRatingTotal?: number;
+  crispinessRatingCount?: number;
   hasCompletedOnboarding?: boolean;
 }): SerializedUser {
+  const ratingTotal = user.crispinessRatingTotal ?? 0;
+  const ratingCount = user.crispinessRatingCount ?? 0;
+
   return {
     id: user.id,
     username: user.username,
+    name: user.name ?? null,
     authProvider: user.authProvider === 'steam' ? 'steam' : 'local',
     steamUsername: user.steamUsername ?? null,
     steamAvatar: user.steamAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
     offeredServices: (user.offeredServices ?? []).filter(isDapService),
+    crispinessRating:
+      ratingCount > 0 ? Number((ratingTotal / ratingCount).toFixed(2)) : null,
+    crispinessRatingCount: ratingCount,
     hasCompletedOnboarding: Boolean(user.hasCompletedOnboarding),
   };
+}
+
+const SCRYPT_PREFIX = 'scrypt';
+const SCRYPT_KEY_LENGTH = 64;
+
+function deriveScryptKey(password: string, saltHex: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, saltHex, SCRYPT_KEY_LENGTH, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const saltHex = randomBytes(16).toString('hex');
+  const derivedKey = await deriveScryptKey(password, saltHex);
+  return `${SCRYPT_PREFIX}$${saltHex}$${derivedKey.toString('hex')}`;
+}
+
+async function verifyPassword(
+  password: string,
+  storedPassword: string,
+): Promise<{ valid: boolean; needsRehash: boolean }> {
+  if (storedPassword.startsWith(`${SCRYPT_PREFIX}$`)) {
+    const parts = storedPassword.split('$');
+    if (parts.length !== 3) {
+      return { valid: false, needsRehash: false };
+    }
+    const [, saltHex, storedHex] = parts;
+    if (!saltHex || !storedHex || storedHex.length % 2 !== 0) {
+      return { valid: false, needsRehash: false };
+    }
+    const storedBuffer = Buffer.from(storedHex, 'hex');
+    const derivedKey = await deriveScryptKey(password, saltHex);
+    if (storedBuffer.length !== derivedKey.length) {
+      return { valid: false, needsRehash: false };
+    }
+    return {
+      valid: timingSafeEqual(storedBuffer, derivedKey),
+      needsRehash: false,
+    };
+  }
+
+  // Support migrating legacy plaintext passwords stored prior to scrypt hashing.
+  const providedBuffer = Buffer.from(password, 'utf8');
+  const legacyBuffer = Buffer.from(storedPassword, 'utf8');
+  const maxLength = Math.max(providedBuffer.length, legacyBuffer.length, 1);
+  const paddedProvided = Buffer.alloc(maxLength);
+  const paddedLegacy = Buffer.alloc(maxLength);
+  providedBuffer.copy(paddedProvided);
+  legacyBuffer.copy(paddedLegacy);
+  const valid =
+    providedBuffer.length === legacyBuffer.length &&
+    timingSafeEqual(paddedProvided, paddedLegacy);
+  return { valid, needsRehash: valid };
 }
 
 function isAppMode(value: unknown): value is AppMode {

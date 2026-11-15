@@ -93,9 +93,15 @@ function MapViewportController({
 }
 
 const UBER_BW_TILE_CSS = `
+  .leaflet-container {
+    background: #f4f4f4 !important;
+  }
   .leaflet-tile-pane {
     filter: grayscale(100%) contrast(110%) brightness(100%);
     -webkit-filter: grayscale(100%) contrast(110%) brightness(100%);
+  }
+  .leaflet-control-attribution {
+    display: none !important;
   }
 `;
 
@@ -112,6 +118,7 @@ function MapSurface({
 
   return (
     <MapContainer
+      attributionControl={false}
       center={initialCenter}
       zoom={initialZoom}
       zoomControl={false}

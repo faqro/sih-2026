@@ -22,11 +22,13 @@ import {
   startSteamSso,
   updateDapperPreferences,
   updateActiveMode,
+  updateProfile,
   type AppMode,
   type AuthMode,
   type AuthUser,
   type DapService,
   type OnboardingChoice,
+  type ProfileUpdatePayload,
   type SteamSsoStatusResponse,
 } from './src/api/auth';
 import AuthFlowScreen, {
@@ -52,6 +54,27 @@ const PROVIDER_LABELS: Record<SocialProvider, string> = {
   spotify: 'Spotify',
   osu: 'OSU',
 };
+
+const WEB_GLOBAL_CSS = `
+  * {
+    -webkit-tap-highlight-color: transparent !important;
+  }
+  input, button, select, textarea {
+    outline: none !important;
+  }
+  input:focus, textarea:focus {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  ::selection {
+    background: #000000 !important;
+    color: #ffffff !important;
+  }
+  ::-moz-selection {
+    background: #000000 !important;
+    color: #ffffff !important;
+  }
+`;
 
 function parseSteamCallbackUrl(rawUrl: string): {
   code: string | null;
@@ -491,6 +514,51 @@ export default function App() {
     }
   }
 
+  async function handleUpdateProfile(
+    payload: ProfileUpdatePayload,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!user) {
+      return { ok: false, error: 'You must be signed in.' };
+    }
+
+    try {
+      const result = await updateProfile(user.token, payload);
+      saveAuthToken(result.token);
+      setUser({ ...result.user, token: result.token });
+      return { ok: true };
+    } catch (updateError) {
+      if (
+        updateError instanceof ApiError &&
+        updateError.status === 401 &&
+        updateError.message.toLowerCase().includes('token')
+      ) {
+        signOut('Your session expired. Please sign in again.');
+      }
+      return {
+        ok: false,
+        error:
+          updateError instanceof Error
+            ? updateError.message
+            : 'Unable to update profile settings.',
+      };
+    }
+  }
+
+  function handleRatingReceived(payload: {
+    crispinessRating: number;
+    crispinessRatingCount: number;
+  }) {
+    setUser((current) =>
+      current
+        ? {
+            ...current,
+            crispinessRating: payload.crispinessRating,
+            crispinessRatingCount: payload.crispinessRatingCount,
+          }
+        : null,
+    );
+  }
+
   async function handleChangeMapMode(nextMode: AppMode) {
     if (
       !user ||
@@ -553,6 +621,7 @@ export default function App() {
   if (isRestoringSession) {
     return (
       <View style={styles.page}>
+        {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
         <SafeAreaView style={styles.app}>
           <StatusBar style="dark" />
           <View style={styles.loadingState}>
@@ -567,6 +636,7 @@ export default function App() {
   if (user && !user.hasCompletedOnboarding) {
     return (
       <View style={styles.page}>
+        {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
         <View style={styles.app}>
           <StatusBar style="dark" />
           <OnboardingModeScreen
@@ -591,20 +661,26 @@ export default function App() {
   if (user) {
     return (
       <View style={styles.page}>
+        {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
         <View style={styles.app}>
           <StatusBar style="dark" />
           <MapScreen
             activeMode={user.activeMode}
             authProvider={user.authProvider}
+            crispinessRating={user.crispinessRating}
+            crispinessRatingCount={user.crispinessRatingCount}
             error={error}
             isChangingMode={isChangingMode}
             isSavingPreferences={isSavingPreferences}
             isSubmitting={isSubmitting}
+            name={user.name}
             offeredServices={user.offeredServices}
             onChangeMode={(nextMode) => void handleChangeMapMode(nextMode)}
             onDeleteAccount={() => void removeAccount()}
+            onRatingReceived={handleRatingReceived}
             onSaveDapperPreferences={handleSaveDapperPreferences}
             onSignOut={() => signOut()}
+            onUpdateProfile={handleUpdateProfile}
             steamAvatar={user.steamAvatar}
             steamUsername={user.steamUsername}
             token={user.token}
@@ -617,6 +693,7 @@ export default function App() {
 
   return (
     <View style={styles.page}>
+      {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
       <View style={[styles.app, styles.welcomeApp]}>
         <StatusBar style="dark" />
         <AuthFlowScreen
