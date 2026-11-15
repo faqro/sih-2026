@@ -1,50 +1,47 @@
-import { useRef } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Platform,
+  Image,
   Pressable,
   SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useState } from 'react';
 
-import type { AppMode } from '../api/auth';
-
-const displayFontFamily = Platform.select({
-  web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-  default: undefined,
-});
+import type { AppMode, DapService } from '../api/auth';
 
 export type OnboardingAction = AppMode | 'skip';
 
 type ModeCardConfig = {
   mode: AppMode;
-  badge: string;
   title: string;
   description: string;
 };
 
 const MODE_CARDS: readonly ModeCardConfig[] = [
   {
-    mode: 'order',
-    badge: 'PASSENGER',
-    title: 'Order a Dap',
-    description: 'Call a dapper to your exact location for a high-resonance dap on demand.',
+    mode: 'dapper',
+    title: 'Become a Dapper',
+    description: 'Go on the map to pick up and fulfill nearby dap requests.',
   },
   {
-    mode: 'dapper',
-    badge: 'DRIVER / FULFILLER',
-    title: 'Become a Dapper',
-    description: 'Hit the streets, receive live nearby requests, and deliver immaculate dap ups.',
+    mode: 'order',
+    title: 'Order a Dap',
+    description: 'Use the map to find nearby dappers and order a dap.',
   },
+];
+
+const DAPPER_SERVICES: readonly DapService[] = [
+  'UberDap',
+  'UberDap Plus',
+  'UberDap Deluxe',
 ];
 
 type OnboardingModeScreenProps = {
   error: string | null;
   pendingAction: OnboardingAction | null;
-  onSelectMode: (mode: AppMode) => void;
+  onSelectMode: (mode: AppMode, offeredServices: DapService[]) => void;
   onSignOut: () => void;
   onSkip: () => void;
 };
@@ -56,18 +53,43 @@ export default function OnboardingModeScreen({
   onSignOut,
   onSkip,
 }: OnboardingModeScreenProps) {
+  const [isChoosingServices, setIsChoosingServices] = useState(false);
+  const [offeredServices, setOfferedServices] = useState<DapService[]>([]);
   const isSubmitting = pendingAction !== null;
+
+  function chooseMode(mode: AppMode) {
+    if (mode === 'dapper') {
+      setIsChoosingServices(true);
+      return;
+    }
+
+    onSelectMode('order', []);
+  }
+
+  function toggleService(service: DapService) {
+    setOfferedServices((current) =>
+      current.includes(service)
+        ? current.filter((item) => item !== service)
+        : [...current, service],
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.content}>
-        {/* Top Header */}
         <View style={styles.topRow}>
-          <Text style={styles.brandTitle}>UberDaps</Text>
+          <View style={styles.brandMark}>
+            <Image
+              accessibilityLabel="Uber DAPS logo"
+              resizeMode="cover"
+              source={require('../../assets/uberdaps-logo.jpg')}
+              style={styles.brandMarkImage}
+            />
+          </View>
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting}
-            hitSlop={10}
+            hitSlop={8}
             onPress={onSignOut}
           >
             <Text style={[styles.signOutLink, isSubmitting && styles.dimmed]}>
@@ -76,63 +98,120 @@ export default function OnboardingModeScreen({
           </Pressable>
         </View>
 
-        <Text style={styles.title}>Choose your role</Text>
+        <Text style={styles.title}>
+          {isChoosingServices ? 'Choose your dapper services' : 'Choose where to start'}
+        </Text>
         <Text style={styles.subtitle}>
-          Select your primary mode to get started on the streets. You can switch anytime.
+          {isChoosingServices
+            ? 'Select at least one service you want to offer. You can change this anytime.'
+            : 'Pick a cue card below or skip for now. You can switch anytime later.'}
         </Text>
 
-        {/* Mode cards */}
-        <View style={styles.cardsStack}>
-          {MODE_CARDS.map((card) => {
-            const isPending = pendingAction === card.mode;
+        {isChoosingServices ? (
+          <View style={styles.cardsStack}>
+            {DAPPER_SERVICES.map((service) => {
+              const isSelected = offeredServices.includes(service);
 
-            return (
+              return (
+                <Pressable
+                  key={service}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: isSelected }}
+                  disabled={isSubmitting}
+                  onPress={() => toggleService(service)}
+                  style={[
+                    styles.serviceCard,
+                    isSelected && styles.serviceCardSelected,
+                    isSubmitting && styles.dimmed,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.serviceCheckbox,
+                      isSelected && styles.serviceCheckboxSelected,
+                    ]}
+                  >
+                    {isSelected ? (
+                      <View style={styles.serviceCheckmark} />
+                    ) : null}
+                  </View>
+                  <Text style={styles.cardTitle}>{service}</Text>
+                </Pressable>
+              );
+            })}
+            <View style={styles.serviceActions}>
               <Pressable
-                key={card.mode}
                 accessibilityRole="button"
                 disabled={isSubmitting}
-                onPress={() => onSelectMode(card.mode)}
-                style={({ pressed }) => [
-                  styles.cueCard,
-                  pressed && !isSubmitting && styles.cueCardPressed,
-                  isSubmitting && !isPending && styles.dimmed,
+                onPress={() => setIsChoosingServices(false)}
+                style={[styles.backButton, isSubmitting && styles.dimmed]}
+              >
+                <Text style={styles.backButtonText}>Back</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSubmitting || offeredServices.length === 0}
+                onPress={() => onSelectMode('dapper', offeredServices)}
+                style={[
+                  styles.continueButton,
+                  (isSubmitting || offeredServices.length === 0) && styles.dimmed,
                 ]}
               >
-                <View style={styles.cardHeader}>
-                  <View style={styles.titleRow}>
-                    <Text style={styles.cardBadge}>{card.badge}</Text>
-                    <Text style={styles.cardTitle}>{card.title}</Text>
-                  </View>
-                  {isPending ? (
-                    <ActivityIndicator color="#000000" size="small" />
-                  ) : (
-                    <Text style={styles.cardArrow}>→</Text>
-                  )}
-                </View>
-                <Text style={styles.cardDescription}>{card.description}</Text>
+                {pendingAction === 'dapper' ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Text style={styles.continueButtonText}>
+                    Continue as Dapper
+                  </Text>
+                )}
               </Pressable>
-            );
-          })}
-        </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.cardsStack}>
+            {MODE_CARDS.map((card) => {
+              const isPending = pendingAction === card.mode;
+
+              return (
+                <Pressable
+                  key={card.mode}
+                  accessibilityRole="button"
+                  disabled={isSubmitting}
+                  onPress={() => chooseMode(card.mode)}
+                  style={({ pressed }) => [
+                    styles.cueCard,
+                    pressed && !isSubmitting && styles.cueCardPressed,
+                    isSubmitting && !isPending && styles.dimmed,
+                  ]}
+                >
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>{card.title}</Text>
+                    {isPending ? (
+                      <ActivityIndicator color="#314b9a" size="small" />
+                    ) : (
+                      <Text style={styles.cardArrow}>→</Text>
+                    )}
+                  </View>
+                  <Text style={styles.cardDescription}>{card.description}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        {/* Footer */}
         <View style={styles.footer}>
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting}
             onPress={onSkip}
-            style={({ pressed }) => [
-              styles.skipButton,
-              pressed && styles.buttonPressed,
-              isSubmitting && styles.dimmed,
-            ]}
+            style={[styles.skipButton, isSubmitting && styles.dimmed]}
           >
             {pendingAction === 'skip' ? (
-              <ActivityIndicator color="#000000" size="small" />
+              <ActivityIndicator color="#405bb6" size="small" />
             ) : (
-              <Text style={styles.skipButtonText}>Skip for now</Text>
+              <Text style={styles.skipButtonText}>Skip</Text>
             )}
           </Pressable>
         </View>
@@ -144,67 +223,139 @@ export default function OnboardingModeScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#ffffff',
   },
   content: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: 28,
     paddingVertical: 28,
-    backgroundColor: '#ffffff',
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 32,
+    marginBottom: 24,
   },
-  brandTitle: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: -0.6,
+  brandMark: {
+    width: 52,
+    height: 52,
+    overflow: 'hidden',
+    borderRadius: 17,
+    backgroundColor: '#000000',
+  },
+  brandMarkImage: {
+    width: '100%',
+    height: '100%',
   },
   signOutLink: {
-    color: '#666666',
-    fontFamily: displayFontFamily,
+    color: '#6f7a90',
     fontSize: 14,
     fontWeight: '600',
   },
   title: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 32,
+    color: '#172033',
+    fontSize: 30,
     fontWeight: '700',
-    letterSpacing: -0.8,
-    marginBottom: 8,
+    letterSpacing: -0.5,
+    marginBottom: 9,
   },
   subtitle: {
-    color: '#666666',
-    fontFamily: displayFontFamily,
+    color: '#6f7a90',
     fontSize: 15,
     lineHeight: 22,
-    letterSpacing: -0.2,
   },
   cardsStack: {
-    gap: 16,
-    marginTop: 32,
+    gap: 14,
+    marginTop: 28,
   },
   cueCard: {
-    minHeight: 130,
+    minHeight: 132,
     justifyContent: 'center',
-    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#dce1ea',
+    borderRadius: 16,
     paddingHorizontal: 20,
-    paddingVertical: 20,
-    backgroundColor: '#ececec',
+    paddingVertical: 22,
+    backgroundColor: '#ffffff',
+    shadowColor: '#1e293b',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   cueCardPressed: {
-    backgroundColor: '#e2e2e2',
-    transform: [{ scale: 0.99 }],
+    borderColor: '#314b9a',
+    backgroundColor: '#f8faff',
   },
   dimmed: {
-    opacity: 0.5,
+    opacity: 0.6,
+  },
+  serviceCard: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#dce1ea',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#ffffff',
+  },
+  serviceCardSelected: {
+    borderColor: '#314b9a',
+    backgroundColor: '#f3f5fc',
+  },
+  serviceCheckbox: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#aab3c3',
+    borderRadius: 6,
+    marginRight: 14,
+  },
+  serviceCheckboxSelected: {
+    borderColor: '#314b9a',
+    backgroundColor: '#314b9a',
+  },
+  serviceCheckmark: {
+    width: 8,
+    height: 8,
+    borderRadius: 2,
+    backgroundColor: '#ffffff',
+  },
+  serviceActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 6,
+  },
+  backButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd3e3',
+    borderRadius: 13,
+    paddingHorizontal: 18,
+  },
+  backButtonText: {
+    color: '#405bb6',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  continueButton: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    backgroundColor: '#314b9a',
+  },
+  continueButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -212,62 +363,44 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
   },
-  titleRow: {
-    gap: 4,
-  },
-  cardBadge: {
-    color: '#777777',
-    fontFamily: displayFontFamily,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
   cardTitle: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 22,
+    color: '#172033',
+    fontSize: 20,
     fontWeight: '700',
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
   },
   cardArrow: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 22,
+    color: '#405bb6',
+    fontSize: 18,
     fontWeight: '700',
   },
   cardDescription: {
-    color: '#444444',
-    fontFamily: displayFontFamily,
+    color: '#6f7a90',
     fontSize: 14,
     lineHeight: 20,
   },
   error: {
-    color: '#ee4d4d',
-    fontFamily: displayFontFamily,
+    color: '#b42318',
     fontSize: 13,
     lineHeight: 19,
     textAlign: 'center',
     marginTop: 16,
   },
   footer: {
-    marginTop: 28,
+    marginTop: 20,
   },
   skipButton: {
-    height: 52,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#000000',
+    borderWidth: 1,
+    borderColor: '#cbd3e3',
+    borderRadius: 13,
     backgroundColor: 'transparent',
   },
-  buttonPressed: {
-    backgroundColor: '#ececec',
-  },
   skipButtonText: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 16,
+    color: '#405bb6',
+    fontSize: 15,
     fontWeight: '700',
   },
 });

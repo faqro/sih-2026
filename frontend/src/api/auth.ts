@@ -1,6 +1,7 @@
 export type AuthMode = 'login' | 'signup';
 export type AppMode = 'order' | 'dapper';
 export type AuthProvider = 'local' | 'chess';
+export type DapService = 'UberDap' | 'UberDap Plus' | 'UberDap Deluxe';
 
 export type AuthUser = {
   id: string;
@@ -9,6 +10,7 @@ export type AuthUser = {
   chessUsername?: string | null;
   chessAvatar?: string | null;
   activeMode: AppMode;
+  offeredServices: DapService[];
   hasCompletedOnboarding: boolean;
 };
 
@@ -33,7 +35,10 @@ export type ChessSsoCancelResponse = {
   cancelled: boolean;
 };
 
-export type OnboardingChoice = { mode: AppMode } | { skip: true };
+export type OnboardingChoice =
+  | { mode: 'order' }
+  | { mode: 'dapper'; offeredServices: DapService[] }
+  | { skip: true };
 
 export class ApiError extends Error {
   readonly status: number;
@@ -147,6 +152,21 @@ export function updateActiveMode(
       body: JSON.stringify({ mode }),
     },
     'Unable to switch map mode.',
+  );
+}
+
+export function updateDapperPreferences(
+  token: string,
+  offeredServices: DapService[],
+): Promise<{ user: AuthUser }> {
+  return requestJson<{ user: AuthUser }>(
+    '/auth/preferences',
+    {
+      method: 'PATCH',
+      headers: authorizedHeaders(token, true),
+      body: JSON.stringify({ offeredServices }),
+    },
+    'Unable to save dapper preferences.',
   );
 }
 

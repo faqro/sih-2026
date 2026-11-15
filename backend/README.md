@@ -31,19 +31,26 @@ PORT=3000
 
 The available endpoints are `POST /auth/signup` and `POST /auth/login`. Both
 accept JSON with `username` and `password`, and return a user object and
-seven-day JSON Web Token on success. Accounts have an `accountType` of `user` or
-`dapper`; new accounts default to `user`, and the account type is included in
-the returned user object. `DELETE /auth/account` deletes the account belonging
-to a valid bearer token; it requires the `Authorization: Bearer <token>` header
-and returns `204` on success.
+seven-day JSON Web Token on success. Accounts have an `activeMode` of `order`
+or `dapper`. New accounts start in order mode and complete onboarding before
+choosing a mode. Dapper onboarding requires at least one service in
+`offeredServices`; `PATCH /auth/preferences` updates that list and also requires
+at least one of `UberDap`, `UberDap Plus`, or `UberDap Deluxe`.
+`DELETE /auth/account` deletes the account belonging to a valid bearer token;
+it requires the `Authorization: Bearer <token>` header and returns `204` on
+success.
 
 The WebSocket endpoint `/ws/dapper-location` accepts an initial JSON message
-`{"type":"authenticate","token":"<jwt>"}`. Only a valid token whose user is
-currently in `dapper` mode is accepted. Authenticated dappers send
-`{"type":"location","latitude":...,"longitude":...}` updates while online.
-The backend keeps each connected dapper's latest location in memory only and
-removes it when that dapper goes offline or disconnects; positions are not
-stored in MongoDB. Switching back to order mode closes the location stream.
+`{"type":"authenticate","token":"<jwt>"}`. Dappers send
+`{"type":"location","latitude":...,"longitude":...}` while online. Order-mode
+users send `{"type":"request","service":"UberDap","latitude":...,"longitude":...}`
+to begin matching, then location updates while their request is pending. The
+backend offers each request to the nearest available online dapper within
+75 km, one at a time; unanswered offers expire after 30 seconds and matching
+continues for up to 10 minutes. Dappers respond with `accept` or `decline`
+messages and finish an accepted request with `delivered`. Locations and request
+state are kept in process memory, not MongoDB; disconnecting or changing modes
+stops the relevant location stream.
 
 ## Fly.io deployment
 
