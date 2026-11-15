@@ -9,6 +9,9 @@ Expo React Native application configured for web by default.
 - `npm run export:web` generates a static web export in `dist`.
 - `npm run android` or `npm run ios` starts the native targets.
 
+The user map requests foreground location permission. On web, the map uses
+OpenStreetMap; native iOS and Android use `react-native-maps`.
+
 ## Backend API
 
 Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL` to the backend URL.

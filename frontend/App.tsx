@@ -13,9 +13,16 @@ import {
   View,
 } from 'react-native';
 
-import { authenticate, deleteAccount, type AuthMode } from './src/api/auth';
+import {
+  authenticate,
+  deleteAccount,
+  type AccountType,
+  type AuthMode,
+} from './src/api/auth';
+import UserMapScreen from './src/screens/UserMapScreen';
 
 type SignedInUser = {
+  accountType: AccountType;
   token: string;
   username: string;
 };
@@ -79,6 +86,20 @@ export default function App() {
     }
   }
 
+  if (user?.accountType === 'user') {
+    return (
+      <>
+        <StatusBar style="dark" />
+        <UserMapScreen
+          error={error}
+          isSubmitting={isSubmitting}
+          onDeleteAccount={removeAccount}
+          onSignOut={() => setUser(null)}
+        />
+      </>
+    );
+  }
+
   if (user) {
     return (
       <View style={styles.page}>
@@ -88,10 +109,10 @@ export default function App() {
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>{user.username.charAt(0)}</Text>
             </View>
-            <Text style={styles.eyebrow}>SIGNED IN</Text>
-            <Text style={styles.welcomeTitle}>Welcome, {user.username}</Text>
+            <Text style={styles.eyebrow}>DAPPER ACCOUNT</Text>
+            <Text style={styles.welcomeTitle}>Dapper dashboard</Text>
             <Text style={styles.welcomeDescription}>
-              Your account is ready to use.
+              Welcome, {user.username}. Dapper features are coming soon.
             </Text>
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <Pressable

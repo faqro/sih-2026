@@ -5,7 +5,7 @@ import express, { type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 
-import { User } from './models/User.js';
+import { User, type AccountType } from './models/User.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -32,7 +32,7 @@ app.post('/auth/signup', async (request, response) => {
       password: credentials.password,
     });
 
-    sendAuthResponse(response, user.id, user.username);
+    sendAuthResponse(response, user.id, user.username, user.accountType);
   } catch (error) {
     if (isDuplicateUsernameError(error)) {
       response.status(409).json({ message: 'This username is already taken.' });
@@ -68,7 +68,7 @@ app.post('/auth/login', async (request, response) => {
       return;
     }
 
-    sendAuthResponse(response, user.id, user.username);
+    sendAuthResponse(response, user.id, user.username, user.accountType);
   } catch (error) {
     console.error('Unable to sign in:', error);
     response.status(500).json({ message: 'Unable to sign in.' });
@@ -167,14 +167,19 @@ function readCredentials(
   return { username, password };
 }
 
-function sendAuthResponse(response: Response, userId: string, username: string) {
+function sendAuthResponse(
+  response: Response,
+  userId: string,
+  username: string,
+  accountType: AccountType,
+) {
   const token = jwt.sign({ sub: userId, username }, jwtSecret, {
     expiresIn: 60 * 60 * 24 * 7,
   });
 
   response.status(200).json({
     token,
-    user: { id: userId, username },
+    user: { id: userId, username, accountType },
   });
 }
 

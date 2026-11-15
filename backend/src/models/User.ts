@@ -1,6 +1,14 @@
 import { model, Schema } from 'mongoose';
 
-const userSchema = new Schema(
+export type AccountType = 'user' | 'dapper';
+
+type UserDocument = {
+  username: string;
+  password: string;
+  accountType: AccountType;
+};
+
+const userSchema = new Schema<UserDocument>(
   {
     username: {
       type: String,
@@ -16,6 +24,12 @@ const userSchema = new Schema(
       type: String,
       required: true,
       select: false,
+    },
+    accountType: {
+      type: String,
+      enum: ['user', 'dapper'],
+      default: 'user',
+      required: true,
     },
   },
   { timestamps: true },

@@ -1,10 +1,12 @@
 export type AuthMode = 'login' | 'signup';
+export type AccountType = 'user' | 'dapper';
 
 type AuthResponse = {
   token: string;
   user: {
     id: string;
     username: string;
+    accountType: AccountType;
   };
 };
 
