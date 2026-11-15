@@ -417,12 +417,14 @@ export default function AuthFlowScreen({
                   autoCapitalize="none"
                   autoComplete="username"
                   autoCorrect={false}
+                  cursorColor="#000000"
                   editable={!isSubmitting}
                   onChangeText={(text) => {
                     setUsername(text);
                     if (error) onClearError();
                   }}
                   placeholderTextColor="#888888"
+                  selectionColor="#000000"
                   style={styles.input}
                   value={username}
                 />
@@ -430,6 +432,7 @@ export default function AuthFlowScreen({
                 <Text style={styles.label}>Password</Text>
                 <TextInput
                   autoComplete={isLogin ? 'current-password' : 'new-password'}
+                  cursorColor="#000000"
                   editable={!isSubmitting}
                   onChangeText={(text) => {
                     setPassword(text);
@@ -437,6 +440,7 @@ export default function AuthFlowScreen({
                   }}
                   placeholderTextColor="#888888"
                   secureTextEntry
+                  selectionColor="#000000"
                   style={styles.input}
                   value={password}
                 />
@@ -631,11 +635,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d0d7e2',
+    borderColor: '#ececec',
     backgroundColor: '#ffffff',
   },
   cancelPendingText: {
-    color: '#34425c',
+    color: '#555555',
     fontFamily: displayFontFamily,
     fontSize: 14,
     fontWeight: '600',

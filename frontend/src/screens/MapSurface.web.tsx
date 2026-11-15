@@ -93,9 +93,15 @@ function MapViewportController({
 }
 
 const UBER_BW_TILE_CSS = `
+  .leaflet-container {
+    background: #f4f4f4 !important;
+  }
   .leaflet-tile-pane {
-    filter: grayscale(100%) contrast(106%) brightness(98%);
-    -webkit-filter: grayscale(100%) contrast(106%) brightness(98%);
+    filter: grayscale(100%) contrast(110%) brightness(100%);
+    -webkit-filter: grayscale(100%) contrast(110%) brightness(100%);
+  }
+  .leaflet-control-attribution {
+    display: none !important;
   }
 `;
 
@@ -112,6 +118,7 @@ function MapSurface({
 
   return (
     <MapContainer
+      attributionControl={false}
       center={initialCenter}
       zoom={initialZoom}
       zoomControl={false}
@@ -119,9 +126,8 @@ function MapSurface({
     >
       <style>{UBER_BW_TILE_CSS}</style>
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        subdomains="abcd"
-        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <MapViewportController
         ownLocation={ownLocation}

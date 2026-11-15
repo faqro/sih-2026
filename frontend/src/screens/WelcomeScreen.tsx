@@ -15,6 +15,7 @@ import {
 import AnimatedDapHands, {
   type AnimatedDapHandsHandle,
 } from '../components/AnimatedDapHands';
+import BrandLogo from '../components/BrandLogo';
 
 export type SocialProvider = 'steam' | 'strava' | 'spotify' | 'osu';
 
@@ -93,7 +94,7 @@ export default function WelcomeScreen({
       >
         <View style={styles.header}>
           <Text style={styles.welcomeTitle}>Welcome to</Text>
-          <Text style={styles.brandTitle}>UberDaps</Text>
+          <BrandLogo size={116} />
         </View>
 
         <View style={styles.heroContainer}>
@@ -233,14 +234,6 @@ const styles = StyleSheet.create({
     lineHeight: 44,
     letterSpacing: -0.9,
   },
-  brandTitle: {
-    color: '#000000',
-    fontFamily: displayFontFamily,
-    fontSize: 42,
-    fontWeight: '700',
-    lineHeight: 46,
-    letterSpacing: -1.1,
-  },
   heroContainer: {
     width: '100%',
     marginTop: 10,
@@ -343,11 +336,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d0d7e2',
+    borderColor: '#ececec',
     backgroundColor: '#ffffff',
   },
   cancelPendingText: {
-    color: '#34425c',
+    color: '#555555',
     fontFamily: displayFontFamily,
     fontSize: 14,
     fontWeight: '600',

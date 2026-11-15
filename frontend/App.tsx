@@ -55,6 +55,27 @@ const PROVIDER_LABELS: Record<SocialProvider, string> = {
   osu: 'OSU',
 };
 
+const WEB_GLOBAL_CSS = `
+  * {
+    -webkit-tap-highlight-color: transparent !important;
+  }
+  input, button, select, textarea {
+    outline: none !important;
+  }
+  input:focus, textarea:focus {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  ::selection {
+    background: #000000 !important;
+    color: #ffffff !important;
+  }
+  ::-moz-selection {
+    background: #000000 !important;
+    color: #ffffff !important;
+  }
+`;
+
 function parseSteamCallbackUrl(rawUrl: string): {
   code: string | null;
   error: string | null;
@@ -600,6 +621,7 @@ export default function App() {
   if (isRestoringSession) {
     return (
       <View style={styles.page}>
+        {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
         <SafeAreaView style={styles.app}>
           <StatusBar style="dark" />
           <View style={styles.loadingState}>
@@ -614,6 +636,7 @@ export default function App() {
   if (user && !user.hasCompletedOnboarding) {
     return (
       <View style={styles.page}>
+        {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
         <View style={styles.app}>
           <StatusBar style="dark" />
           <OnboardingModeScreen
@@ -638,6 +661,7 @@ export default function App() {
   if (user) {
     return (
       <View style={styles.page}>
+        {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
         <View style={styles.app}>
           <StatusBar style="dark" />
           <MapScreen
@@ -669,6 +693,7 @@ export default function App() {
 
   return (
     <View style={styles.page}>
+      {Platform.OS === 'web' ? <style>{WEB_GLOBAL_CSS}</style> : null}
       <View style={[styles.app, styles.welcomeApp]}>
         <StatusBar style="dark" />
         <AuthFlowScreen
