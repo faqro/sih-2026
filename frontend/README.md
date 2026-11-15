@@ -30,5 +30,7 @@ pushed to `main`.
    - Repository secret `CLOUDFLARE_API_TOKEN`: the Cloudflare API token.
    - Repository variable `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account ID.
    - Repository variable `CLOUDFLARE_PAGES_PROJECT`: the Pages project name.
+   - Repository variable `EXPO_PUBLIC_API_URL`: the public HTTPS URL of the
+     Fly.io backend, without a trailing slash.
 4. Commit and push the workflow to `main`. Every subsequent push to `main`
    rebuilds and deploys the frontend.
