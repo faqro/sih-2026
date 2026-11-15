@@ -179,7 +179,7 @@ export default function OnboardingModeScreen({
                   <View style={styles.cardHeader}>
                     <Text style={styles.cardTitle}>{card.title}</Text>
                     {isPending ? (
-                      <ActivityIndicator color="#314b9a" size="small" />
+                      <ActivityIndicator color="#000000" size="small" />
                     ) : (
                       <Text style={styles.cardArrow}>→</Text>
                     )}
@@ -201,7 +201,7 @@ export default function OnboardingModeScreen({
             style={[styles.skipButton, isSubmitting && styles.dimmed]}
           >
             {pendingAction === 'skip' ? (
-              <ActivityIndicator color="#405bb6" size="small" />
+              <ActivityIndicator color="#000000" size="small" />
             ) : (
               <Text style={styles.skipButtonText}>Skip</Text>
             )}
@@ -215,12 +215,13 @@ export default function OnboardingModeScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    backgroundColor: '#ffffff',
   },
   content: {
     flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-    paddingVertical: 28,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 28,
   },
   topRow: {
     flexDirection: 'row',
@@ -230,49 +231,50 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     color: '#000000',
-    fontSize: 26,
-    fontWeight: '700',
+    fontSize: 28,
+    fontWeight: '800',
     letterSpacing: -0.6,
   },
   signOutLink: {
-    color: '#6f7a90',
-    fontSize: 14,
+    color: '#666666',
+    fontSize: 15,
     fontWeight: '600',
   },
   title: {
-    color: '#172033',
-    fontSize: 30,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-    marginBottom: 9,
+    color: '#000000',
+    fontSize: 32,
+    fontWeight: '800',
+    letterSpacing: -0.7,
+    lineHeight: 38,
+    marginBottom: 8,
   },
   subtitle: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 15,
     lineHeight: 22,
   },
   cardsStack: {
-    gap: 14,
+    gap: 16,
     marginTop: 28,
   },
   cueCard: {
-    minHeight: 132,
+    minHeight: 124,
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#dce1ea',
+    borderWidth: 1.5,
+    borderColor: '#ececec',
     borderRadius: 16,
     paddingHorizontal: 20,
-    paddingVertical: 22,
+    paddingVertical: 20,
     backgroundColor: '#ffffff',
-    shadowColor: '#1e293b',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 3 },
+    shadowColor: '#000000',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
   cueCardPressed: {
-    borderColor: '#314b9a',
-    backgroundColor: '#f8faff',
+    borderColor: '#000000',
+    backgroundColor: '#fafafa',
   },
   dimmed: {
     opacity: 0.6,
@@ -281,15 +283,15 @@ const styles = StyleSheet.create({
     minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#dce1ea',
+    borderWidth: 1.5,
+    borderColor: '#ececec',
     borderRadius: 14,
     paddingHorizontal: 16,
     backgroundColor: '#ffffff',
   },
   serviceCardSelected: {
-    borderColor: '#314b9a',
-    backgroundColor: '#f3f5fc',
+    borderColor: '#000000',
+    backgroundColor: '#fafafa',
   },
   serviceCheckbox: {
     width: 22,
@@ -297,13 +299,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#aab3c3',
+    borderColor: '#cccccc',
     borderRadius: 6,
     marginRight: 14,
   },
   serviceCheckboxSelected: {
-    borderColor: '#314b9a',
-    backgroundColor: '#314b9a',
+    borderColor: '#000000',
+    backgroundColor: '#000000',
   },
   serviceCheckmark: {
     width: 8,
@@ -314,34 +316,35 @@ const styles = StyleSheet.create({
   serviceActions: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 6,
+    marginTop: 8,
   },
   backButton: {
-    minHeight: 48,
+    minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#cbd3e3',
-    borderRadius: 13,
-    paddingHorizontal: 18,
+    borderWidth: 1.5,
+    borderColor: '#ececec',
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    backgroundColor: '#ffffff',
   },
   backButtonText: {
-    color: '#405bb6',
-    fontSize: 14,
+    color: '#000000',
+    fontSize: 15,
     fontWeight: '700',
   },
   continueButton: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 13,
-    paddingHorizontal: 12,
-    backgroundColor: '#314b9a',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#000000',
   },
   continueButtonText: {
     color: '#ffffff',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
   },
   cardHeader: {
@@ -351,42 +354,42 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   cardTitle: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 20,
     fontWeight: '700',
     letterSpacing: -0.3,
   },
   cardArrow: {
-    color: '#405bb6',
-    fontSize: 18,
+    color: '#000000',
+    fontSize: 20,
     fontWeight: '700',
   },
   cardDescription: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 14,
     lineHeight: 20,
   },
   error: {
-    color: '#b42318',
+    color: '#ee4d4d',
     fontSize: 13,
     lineHeight: 19,
     textAlign: 'center',
     marginTop: 16,
   },
   footer: {
-    marginTop: 20,
+    marginTop: 24,
   },
   skipButton: {
-    height: 48,
+    height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#cbd3e3',
-    borderRadius: 13,
-    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: '#ececec',
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
   },
   skipButtonText: {
-    color: '#405bb6',
+    color: '#000000',
     fontSize: 15,
     fontWeight: '700',
   },

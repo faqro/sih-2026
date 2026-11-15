@@ -243,7 +243,7 @@ function MapSurface({
       {counterpartLocation ? (
         <Marker
           coordinate={counterpartLocation}
-          pinColor="#314b9a"
+          pinColor="#000000"
           title={mode === 'dapper' ? 'UberDap user' : 'Matched dapper'}
         />
       ) : null}
