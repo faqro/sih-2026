@@ -207,11 +207,16 @@ export default function MapScreen({
   const [profileName, setProfileName] = useState(name ?? '');
   const [profileUsername, setProfileUsername] = useState(username ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [passwordCurrent, setPasswordCurrent] = useState('');
+  const [passwordNew, setPasswordNew] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [ratingsData, setRatingsData] = useState<DapperRatingsResponse | null>(
     null,
   );
@@ -239,6 +244,7 @@ export default function MapScreen({
   const sheetProgress = useRef(new Animated.Value(0)).current;
   const preferencesProgress = useRef(new Animated.Value(0)).current;
   const profileProgress = useRef(new Animated.Value(0)).current;
+  const passwordSheetProgress = useRef(new Animated.Value(0)).current;
   const dapperSheetProgress = useRef(new Animated.Value(0)).current;
   const dapperContentRef = useRef(false);
   const dapperSheetOpenRef = useRef(false);
@@ -261,6 +267,11 @@ export default function MapScreen({
   const profileTranslateY = profileProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [profileSheetHeight, 0],
+  });
+  const passwordSheetHeight = Math.min(Math.round(viewportHeight * 0.72), 520);
+  const passwordSheetTranslateY = passwordSheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [passwordSheetHeight, 0],
   });
   const dapperSheetTranslateY = dapperSheetProgress.interpolate({
     inputRange: [0, 1],
@@ -781,8 +792,12 @@ export default function MapScreen({
     setProfileName(name ?? '');
     setProfileUsername(username ?? '');
     setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
+    setIsPasswordModalOpen(false);
+    setPasswordCurrent('');
+    setPasswordNew('');
+    setPasswordConfirm('');
+    setPasswordError(null);
+    setPasswordSuccess(null);
     setProfileError(null);
     setProfileSuccess(null);
     setIsProfileOpen(true);
@@ -796,8 +811,11 @@ export default function MapScreen({
   }
 
   function closeProfile() {
-    if (isSavingProfile) {
+    if (isSavingProfile || isUpdatingPassword) {
       return;
+    }
+    if (isPasswordModalOpen) {
+      closePasswordModal();
     }
     Animated.timing(profileProgress, {
       toValue: 0,
@@ -808,6 +826,105 @@ export default function MapScreen({
         setIsProfileOpen(false);
       }
     });
+  }
+
+  function openPasswordModal() {
+    setPasswordCurrent('');
+    setPasswordNew('');
+    setPasswordConfirm('');
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    setIsPasswordModalOpen(true);
+    passwordSheetProgress.setValue(0);
+    Animated.timing(passwordSheetProgress, {
+      toValue: 1,
+      duration: 260,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closePasswordModal() {
+    if (isUpdatingPassword) {
+      return;
+    }
+    Animated.timing(passwordSheetProgress, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setIsPasswordModalOpen(false);
+        setPasswordCurrent('');
+        setPasswordNew('');
+        setPasswordConfirm('');
+        setPasswordError(null);
+        setPasswordSuccess(null);
+      }
+    });
+  }
+
+  function closeAllProfile() {
+    closePasswordModal();
+    closeProfile();
+  }
+
+  async function handleUpdatePassword() {
+    if (isUpdatingPassword) {
+      return;
+    }
+
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    if (!passwordCurrent) {
+      setPasswordError('Enter your current password.');
+      return;
+    }
+
+    if (passwordNew.length < 8 || passwordNew.length > 128) {
+      setPasswordError('New password must be between 8 and 128 characters.');
+      return;
+    }
+
+    if (passwordNew !== passwordConfirm) {
+      setPasswordError('New passwords do not match.');
+      return;
+    }
+
+    if (passwordNew === passwordCurrent) {
+      setPasswordError(
+        'New password must be different from your current password.',
+      );
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const result = await onUpdateProfile({
+        currentPassword: passwordCurrent,
+        newPassword: passwordNew,
+      });
+      if (!isMountedRef.current) {
+        return;
+      }
+      if (!result.ok) {
+        setPasswordError(result.error);
+        return;
+      }
+      setPasswordCurrent('');
+      setPasswordNew('');
+      setPasswordConfirm('');
+      setPasswordSuccess('Password updated securely.');
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          closePasswordModal();
+        }
+      }, 1200);
+    } finally {
+      if (isMountedRef.current) {
+        setIsUpdatingPassword(false);
+      }
+    }
   }
 
   async function handleSaveProfile() {
@@ -821,7 +938,6 @@ export default function MapScreen({
     const existingUsername = (username ?? '').toLowerCase();
     const isUsernameChanged = normalizedUsername !== existingUsername;
     const isNameChanged = trimmedName !== existingName;
-    const isPasswordChanged = newPassword.length > 0;
 
     setProfileError(null);
     setProfileSuccess(null);
@@ -838,24 +954,9 @@ export default function MapScreen({
       return;
     }
 
-    if (!isNameChanged && !isUsernameChanged && !isPasswordChanged) {
+    if (!isNameChanged && !isUsernameChanged) {
       setProfileError('No changes to save.');
       return;
-    }
-
-    if (isPasswordChanged) {
-      if (newPassword.length < 8 || newPassword.length > 128) {
-        setProfileError('New password must be between 8 and 128 characters.');
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        setProfileError('New passwords do not match.');
-        return;
-      }
-      if (!currentPassword) {
-        setProfileError('Enter your current password to set a new password.');
-        return;
-      }
     }
 
     if (isUsernameChanged && authProvider !== 'steam' && !currentPassword) {
@@ -869,9 +970,6 @@ export default function MapScreen({
     }
     if (isUsernameChanged) {
       payload.username = normalizedUsername;
-    }
-    if (isPasswordChanged) {
-      payload.newPassword = newPassword;
     }
     if (currentPassword) {
       payload.currentPassword = currentPassword;
@@ -888,8 +986,6 @@ export default function MapScreen({
         return;
       }
       setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
       setProfileSuccess('Profile updated securely.');
     } finally {
       if (isMountedRef.current) {
@@ -1176,6 +1272,8 @@ export default function MapScreen({
     ratingsData?.averageRating ?? crispinessRating ?? null;
   const displayRatingCount =
     ratingsData?.totalRatings ?? crispinessRatingCount ?? 0;
+  const isUsernameChanged =
+    profileUsername.trim().toLowerCase() !== (username ?? '').toLowerCase();
 
   function renderDapperRatingsSection() {
     return (
@@ -1460,7 +1558,11 @@ export default function MapScreen({
           </View>
         </View>
 
-        {error && !isMenuOpen && !isPreferencesOpen && !isProfileOpen ? (
+        {error &&
+        !isMenuOpen &&
+        !isPreferencesOpen &&
+        !isProfileOpen &&
+        !isPasswordModalOpen ? (
           <Text style={styles.modeError}>{error}</Text>
         ) : null}
         {locationTrackingError ? (
@@ -2249,11 +2351,7 @@ export default function MapScreen({
                   value={profileUsername}
                 />
 
-                {authProvider === 'steam' ? (
-                  <Text style={styles.steamSecurityNote}>
-                    Signed in with Steam. Password changes are managed by Steam.
-                  </Text>
-                ) : (
+                {isUsernameChanged && authProvider !== 'steam' ? (
                   <>
                     <Text style={styles.inputLabel}>Current Password</Text>
                     <TextInput
@@ -2264,46 +2362,14 @@ export default function MapScreen({
                         setProfileError(null);
                         setProfileSuccess(null);
                       }}
-                      placeholder="Required to change username or password"
+                      placeholder="Required to confirm username change"
                       placeholderTextColor="#888888"
                       secureTextEntry
                       style={styles.profileInput}
                       value={currentPassword}
                     />
-
-                    <Text style={styles.inputLabel}>New Password</Text>
-                    <TextInput
-                      autoComplete="new-password"
-                      editable={!isSavingProfile}
-                      onChangeText={(text) => {
-                        setNewPassword(text);
-                        setProfileError(null);
-                        setProfileSuccess(null);
-                      }}
-                      placeholder="Leave blank to keep current password"
-                      placeholderTextColor="#888888"
-                      secureTextEntry
-                      style={styles.profileInput}
-                      value={newPassword}
-                    />
-
-                    <Text style={styles.inputLabel}>Confirm New Password</Text>
-                    <TextInput
-                      autoComplete="new-password"
-                      editable={!isSavingProfile}
-                      onChangeText={(text) => {
-                        setConfirmPassword(text);
-                        setProfileError(null);
-                        setProfileSuccess(null);
-                      }}
-                      placeholder="Re-enter new password"
-                      placeholderTextColor="#888888"
-                      secureTextEntry
-                      style={styles.profileInput}
-                      value={confirmPassword}
-                    />
                   </>
-                )}
+                ) : null}
 
                 {profileError ? (
                   <Text style={styles.profileErrorText}>{profileError}</Text>
@@ -2329,10 +2395,169 @@ export default function MapScreen({
                     <Text style={styles.confirmButtonText}>Save Profile</Text>
                   )}
                 </Pressable>
+
+                {authProvider === 'steam' ? (
+                  <Text style={styles.steamSecurityNote}>
+                    Signed in with Steam. Password changes are managed by Steam.
+                  </Text>
+                ) : (
+                  <View style={styles.changePasswordSection}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={openPasswordModal}
+                      style={({ pressed }) => [
+                        styles.changePasswordCard,
+                        pressed && styles.changePasswordCardPressed,
+                      ]}
+                    >
+                      <View style={styles.changePasswordCardContent}>
+                        <Text style={styles.changePasswordCardTitle}>
+                          Change Password
+                        </Text>
+                        <Text style={styles.changePasswordCardSubtitle}>
+                          Update your account password
+                        </Text>
+                      </View>
+                      <View style={styles.changePasswordArrowContainer}>
+                        <Text style={styles.changePasswordArrow}>→</Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                )}
               </View>
 
               {!isDapperMode ? renderDapperRatingsSection() : null}
             </ScrollView>
+          </Animated.View>
+        ) : null}
+
+        {isPasswordModalOpen ? (
+          <Animated.View
+            style={[
+              styles.passwordModalBackdrop,
+              {
+                opacity: passwordSheetProgress,
+              },
+            ]}
+          >
+            <Pressable
+              accessibilityLabel="Dismiss change password sheet"
+              onPress={closePasswordModal}
+              style={StyleSheet.absoluteFill}
+            />
+            <Animated.View
+              style={[
+                styles.passwordSheet,
+                {
+                  height: passwordSheetHeight,
+                  transform: [{ translateY: passwordSheetTranslateY }],
+                },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isUpdatingPassword}
+                  onPress={closePasswordModal}
+                  style={styles.sheetCloseButton}
+                >
+                  <Text style={styles.sheetCloseText}>← Back</Text>
+                </Pressable>
+                <Text style={styles.sheetTitle}>Change Password</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isUpdatingPassword}
+                  onPress={closeAllProfile}
+                  style={styles.sheetCloseButton}
+                >
+                  <Text style={styles.sheetCloseText}>Close</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView
+                bounces={false}
+                contentContainerStyle={styles.passwordScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.passwordSubtitle}>
+                  Enter your current password and choose a new password (min. 8 characters).
+                </Text>
+
+                <Text style={styles.inputLabel}>Current Password</Text>
+                <TextInput
+                  autoComplete="current-password"
+                  editable={!isUpdatingPassword}
+                  onChangeText={(text) => {
+                    setPasswordCurrent(text);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  placeholder="Enter current password"
+                  placeholderTextColor="#888888"
+                  secureTextEntry
+                  style={styles.profileInput}
+                  value={passwordCurrent}
+                />
+
+                <Text style={styles.inputLabel}>New Password</Text>
+                <TextInput
+                  autoComplete="new-password"
+                  editable={!isUpdatingPassword}
+                  onChangeText={(text) => {
+                    setPasswordNew(text);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  placeholder="At least 8 characters"
+                  placeholderTextColor="#888888"
+                  secureTextEntry
+                  style={styles.profileInput}
+                  value={passwordNew}
+                />
+
+                <Text style={styles.inputLabel}>Confirm New Password</Text>
+                <TextInput
+                  autoComplete="new-password"
+                  editable={!isUpdatingPassword}
+                  onChangeText={(text) => {
+                    setPasswordConfirm(text);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  placeholder="Re-enter new password"
+                  placeholderTextColor="#888888"
+                  secureTextEntry
+                  style={styles.profileInput}
+                  value={passwordConfirm}
+                />
+
+                {passwordError ? (
+                  <Text style={styles.profileErrorText}>{passwordError}</Text>
+                ) : null}
+                {passwordSuccess ? (
+                  <Text style={styles.profileSuccessText}>
+                    {passwordSuccess}
+                  </Text>
+                ) : null}
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isUpdatingPassword}
+                  onPress={() => void handleUpdatePassword()}
+                  style={[
+                    styles.confirmButton,
+                    isUpdatingPassword && styles.disabledButton,
+                  ]}
+                >
+                  {isUpdatingPassword ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.confirmButtonText}>Update Password</Text>
+                  )}
+                </Pressable>
+              </ScrollView>
+            </Animated.View>
           </Animated.View>
         ) : null}
 
@@ -3604,23 +3829,105 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
+    gap: 8,
+    flexWrap: 'wrap',
   },
   sectionTitle: {
     color: '#000000',
     fontFamily: displayFontFamily,
     fontSize: 16,
     fontWeight: '700',
+    flexShrink: 1,
   },
   securityBadge: {
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 8,
     backgroundColor: '#ececec',
+    flexShrink: 0,
   },
   securityBadgeText: {
     color: '#000000',
     fontSize: 11,
     fontWeight: '700',
+  },
+  changePasswordSection: {
+    marginTop: 14,
+  },
+  changePasswordCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#ececec',
+  },
+  changePasswordCardPressed: {
+    backgroundColor: '#f0f0f0',
+  },
+  changePasswordCardContent: {
+    flex: 1,
+    marginRight: 12,
+  },
+  changePasswordCardTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  changePasswordCardSubtitle: {
+    color: '#666666',
+    fontSize: 12,
+  },
+  changePasswordArrowContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ececec',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  changePasswordArrow: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  passwordModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    zIndex: 1115,
+    justifyContent: 'flex-end',
+  },
+  passwordSheet: {
+    width: '100%',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -5 },
+    elevation: 22,
+  },
+  passwordScrollContent: {
+    paddingBottom: 32,
+    gap: 4,
+  },
+  passwordSubtitle: {
+    color: '#666666',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 8,
   },
   inputLabel: {
     color: '#555555',
