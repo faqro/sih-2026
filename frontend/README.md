@@ -11,6 +11,9 @@ Expo React Native application configured for web by default.
 
 The user map requests foreground location permission. On web, the map uses
 OpenStreetMap; native iOS and Android use `react-native-maps`.
+Native maps use Google Maps with a minimal style. Set `GOOGLE_MAPS_API_KEY` in
+`.env` before creating native builds; restrict the key to this app's iOS and
+Android identifiers in Google Cloud.
 
 ## Backend API
 

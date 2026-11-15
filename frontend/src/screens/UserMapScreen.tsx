@@ -153,6 +153,7 @@ const styles = StyleSheet.create({
   locationMessage: {
     position: 'absolute',
     top: '42%',
+    zIndex: 1101,
     alignSelf: 'center',
     maxWidth: '85%',
     alignItems: 'center',
@@ -184,7 +185,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFill,
+    zIndex: 1100,
+    elevation: 10,
     justifyContent: 'flex-end',
     paddingHorizontal: 16,
   },
