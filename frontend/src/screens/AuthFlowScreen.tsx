@@ -34,6 +34,12 @@ type ProviderConfig = {
 
 const PROVIDERS: readonly ProviderConfig[] = [
   {
+    id: 'chess',
+    label: 'Continue with Chess.com',
+    borderColor: '#D7E8C7',
+    icon: require('../../assets/providers/chess.png'),
+  },
+  {
     id: 'steam',
     label: 'Continue with Steam',
     borderColor: '#ACB2BE',
@@ -56,12 +62,6 @@ const PROVIDERS: readonly ProviderConfig[] = [
     label: 'Continue with OSU',
     borderColor: '#FBD1E4',
     icon: require('../../assets/providers/osu.png'),
-  },
-  {
-    id: 'chess',
-    label: 'Continue with Chess.com',
-    borderColor: '#D7E8C7',
-    icon: require('../../assets/providers/chess.png'),
   },
 ];
 
