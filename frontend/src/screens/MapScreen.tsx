@@ -1400,7 +1400,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     width: '100%',
-    backgroundColor: '#e8edf5',
+    backgroundColor: '#ffffff',
   },
   mapLayer: {
     ...StyleSheet.absoluteFill,
@@ -1559,13 +1559,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#edf1f8',
+    borderBottomColor: '#ececec',
   },
   menuAvatar: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#edf1f8',
+    backgroundColor: '#ececec',
   },
   menuAccountText: {
     flex: 1,
@@ -1664,7 +1664,7 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 5,
-    backgroundColor: '#16a34a',
+    backgroundColor: '#000000',
   },
   onlineBadgeText: {
     color: '#000000',
@@ -1702,10 +1702,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.96)',
   },
   goOnlineButton: {
-    backgroundColor: '#16845b',
+    backgroundColor: '#000000',
   },
   goOfflineButton: {
-    backgroundColor: '#ee4d4d',
+    backgroundColor: '#222222',
   },
   accountError: {
     color: '#ee4d4d',
@@ -1971,7 +1971,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   matchingError: {
-    color: '#b42318',
+    color: '#ee4d4d',
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 12,
@@ -2127,12 +2127,13 @@ const styles = StyleSheet.create({
     minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#f0b8b5',
+    borderWidth: 1.5,
+    borderColor: '#ececec',
     borderRadius: 13,
+    backgroundColor: '#ffffff',
   },
   declineButtonText: {
-    color: '#ee4d4d',
+    color: '#000000',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -2142,7 +2143,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 13,
-    backgroundColor: '#16845b',
+    backgroundColor: '#000000',
   },
   acceptButtonText: {
     color: '#ffffff',
@@ -2155,7 +2156,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 13,
     marginTop: 20,
-    backgroundColor: '#16845b',
+    backgroundColor: '#000000',
   },
   deliveredButtonText: {
     color: '#ffffff',

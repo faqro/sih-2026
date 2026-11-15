@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 
 import type { AuthMode } from '../api/auth';
-import BrandLogo from '../components/BrandLogo';
 
 const displayFontFamily = Platform.select({
   web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -198,7 +197,7 @@ export default function AuthFlowScreen({
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.welcomeTitle}>Welcome to</Text>
-              <BrandLogo size={84} />
+              <Text style={styles.brandTitle}>UberDaps</Text>
             </View>
 
             {/* Back button (fades in when auth form is active) */}
@@ -418,12 +417,14 @@ export default function AuthFlowScreen({
                   autoCapitalize="none"
                   autoComplete="username"
                   autoCorrect={false}
+                  cursorColor="#000000"
                   editable={!isSubmitting}
                   onChangeText={(text) => {
                     setUsername(text);
                     if (error) onClearError();
                   }}
                   placeholderTextColor="#888888"
+                  selectionColor="#000000"
                   style={styles.input}
                   value={username}
                 />
@@ -431,6 +432,7 @@ export default function AuthFlowScreen({
                 <Text style={styles.label}>Password</Text>
                 <TextInput
                   autoComplete={isLogin ? 'current-password' : 'new-password'}
+                  cursorColor="#000000"
                   editable={!isSubmitting}
                   onChangeText={(text) => {
                     setPassword(text);
@@ -438,6 +440,7 @@ export default function AuthFlowScreen({
                   }}
                   placeholderTextColor="#888888"
                   secureTextEntry
+                  selectionColor="#000000"
                   style={styles.input}
                   value={password}
                 />
@@ -534,6 +537,14 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     lineHeight: 44,
     letterSpacing: -0.9,
+  },
+  brandTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 42,
+    fontWeight: '700',
+    lineHeight: 46,
+    letterSpacing: -1.1,
   },
   backButtonWrapper: {
     paddingTop: 6,
