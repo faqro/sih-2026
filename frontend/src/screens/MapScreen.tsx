@@ -1837,6 +1837,10 @@ const styles = StyleSheet.create({
     borderColor: '#000000',
     backgroundColor: '#fafafa',
   },
+  buttonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.985 }],
+  },
   optionLeft: {
     flex: 1,
     gap: 4,
