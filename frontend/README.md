@@ -15,8 +15,8 @@ Native maps use Google Maps with a minimal style. Set `GOOGLE_MAPS_API_KEY` in
 `.env` before creating native builds; restrict the key to this app's iOS and
 Android identifiers in Google Cloud.
 Dappers can use **Go Online** to share foreground location with the backend
-over an authenticated WebSocket; location updates stop when they go offline or
-disconnect. User accounts never start a location stream.
+over an authenticated WebSocket; location updates stop when they switch to
+order mode, go offline, or disconnect. Order mode never starts a location stream.
 
 ## Backend API
 

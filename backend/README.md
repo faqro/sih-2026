@@ -38,12 +38,12 @@ to a valid bearer token; it requires the `Authorization: Bearer <token>` header
 and returns `204` on success.
 
 The WebSocket endpoint `/ws/dapper-location` accepts an initial JSON message
-`{"type":"authenticate","token":"<jwt>"}`. Only a token belonging to a dapper
-account is accepted. Authenticated dappers send
+`{"type":"authenticate","token":"<jwt>"}`. Only a valid token whose user is
+currently in `dapper` mode is accepted. Authenticated dappers send
 `{"type":"location","latitude":...,"longitude":...}` updates while online.
 The backend keeps each connected dapper's latest location in memory only and
 removes it when that dapper goes offline or disconnects; positions are not
-stored in MongoDB.
+stored in MongoDB. Switching back to order mode closes the location stream.
 
 ## Fly.io deployment
 
