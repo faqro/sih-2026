@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -78,14 +77,7 @@ export default function OnboardingModeScreen({
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.content}>
         <View style={styles.topRow}>
-          <View style={styles.brandMark}>
-            <Image
-              accessibilityLabel="Uber DAPS logo"
-              resizeMode="cover"
-              source={require('../../assets/uberdaps-logo.jpg')}
-              style={styles.brandMarkImage}
-            />
-          </View>
+          <Text style={styles.brandTitle}>UberDaps</Text>
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting}
@@ -236,16 +228,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 24,
   },
-  brandMark: {
-    width: 52,
-    height: 52,
-    overflow: 'hidden',
-    borderRadius: 17,
-    backgroundColor: '#000000',
-  },
-  brandMarkImage: {
-    width: '100%',
-    height: '100%',
+  brandTitle: {
+    color: '#000000',
+    fontSize: 26,
+    fontWeight: '700',
+    letterSpacing: -0.6,
   },
   signOutLink: {
     color: '#6f7a90',

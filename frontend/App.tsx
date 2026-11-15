@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   SafeAreaView,
@@ -48,8 +48,10 @@ export default function App() {
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [isChangingMode, setIsChangingMode] = useState(false);
   const [onboardingAction, setOnboardingAction] =
     useState<OnboardingAction | null>(null);
+  const modeChangeInProgressRef = useRef(false);
 
   const isLogin = mode === 'login';
 
@@ -185,11 +187,17 @@ export default function App() {
   }
 
   async function handleChangeMapMode(nextMode: AppMode) {
-    if (!user || user.activeMode === nextMode) {
+    if (
+      !user ||
+      user.activeMode === nextMode ||
+      modeChangeInProgressRef.current
+    ) {
       return;
     }
 
     const previousMode = user.activeMode;
+    modeChangeInProgressRef.current = true;
+    setIsChangingMode(true);
     setError(null);
     setUser((current) =>
       current ? { ...current, activeMode: nextMode } : null,
@@ -198,7 +206,9 @@ export default function App() {
     try {
       const result = await updateActiveMode(user.token, nextMode);
       setUser((current) =>
-        current ? { ...result.user, token: current.token } : null,
+        current && current.activeMode === nextMode
+          ? { ...result.user, token: current.token }
+          : current,
       );
     } catch (switchError) {
       setUser((current) =>
@@ -207,6 +217,9 @@ export default function App() {
           : current,
       );
       handleSessionError(switchError, 'Unable to switch map mode.');
+    } finally {
+      modeChangeInProgressRef.current = false;
+      setIsChangingMode(false);
     }
   }
 
@@ -278,6 +291,7 @@ export default function App() {
           <MapScreen
             activeMode={user.activeMode}
             error={error}
+            isChangingMode={isChangingMode}
             isSavingPreferences={isSavingPreferences}
             isSubmitting={isSubmitting}
             offeredServices={user.offeredServices}

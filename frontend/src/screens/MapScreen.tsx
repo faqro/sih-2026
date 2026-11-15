@@ -30,6 +30,7 @@ type DapOption = (typeof dapOptions)[number];
 type MapScreenProps = {
   activeMode: AppMode;
   error: string | null;
+  isChangingMode: boolean;
   isSavingPreferences: boolean;
   isSubmitting: boolean;
   offeredServices: DapService[];
@@ -56,6 +57,7 @@ const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
 export default function MapScreen({
   activeMode,
   error,
+  isChangingMode,
   isSavingPreferences,
   isSubmitting,
   offeredServices,
@@ -77,6 +79,8 @@ export default function MapScreen({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+  const [pendingModeAfterPreferences, setPendingModeAfterPreferences] =
+    useState<AppMode | null>(null);
   const [selectedServices, setSelectedServices] =
     useState<DapService[]>(offeredServices);
   const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
@@ -180,14 +184,17 @@ export default function MapScreen({
     }
   }, [activeMode, sheetProgress]);
 
-  function handleSelectMode(nextMode: AppMode) {
+  function handleSelectMode(
+    nextMode: AppMode,
+    hasDapperServices = offeredServices.length > 0,
+  ) {
     setIsMenuOpen(false);
 
-    if (nextMode === activeMode) {
+    if (nextMode === activeMode || isChangingMode) {
       return;
     }
 
-    if (nextMode === 'dapper' && offeredServices.length === 0) {
+    if (nextMode === 'dapper' && !hasDapperServices) {
       openPreferences();
       return;
     }
@@ -437,6 +444,7 @@ export default function MapScreen({
   }
 
   function closePreferences() {
+    setPendingModeAfterPreferences(null);
     Animated.timing(preferencesProgress, {
       toValue: 0,
       duration: 220,
@@ -461,8 +469,12 @@ export default function MapScreen({
       return;
     }
 
+    const modeAfterSave = pendingModeAfterPreferences;
     if (await onSaveDapperPreferences(selectedServices)) {
       closePreferences();
+      if (modeAfterSave) {
+        handleSelectMode(modeAfterSave, true);
+      }
     }
   }
 
@@ -470,6 +482,7 @@ export default function MapScreen({
     if (nextMode === 'dapper' && offeredServices.length === 0) {
       requestLocationRequestIdRef.current += 1;
       setIsRequestingLocation(false);
+      setPendingModeAfterPreferences(nextMode);
       openPreferences();
       return;
     }
@@ -643,6 +656,7 @@ export default function MapScreen({
                   accessibilityState={{ selected: isSelected }}
                   disabled={
                     isSubmitting ||
+                    isChangingMode ||
                     isSavingPreferences ||
                     requestInProgress ||
                     activeDap !== null
@@ -652,6 +666,7 @@ export default function MapScreen({
                     styles.modeTab,
                     isSelected && styles.modeTabSelected,
                     (isSubmitting ||
+                      isChangingMode ||
                       isSavingPreferences ||
                       requestInProgress ||
                       activeDap !== null) &&
@@ -724,6 +739,10 @@ export default function MapScreen({
             ) : null}
           </View>
         </View>
+
+        {error && !isMenuOpen && !isPreferencesOpen ? (
+          <Text style={styles.modeError}>{error}</Text>
+        ) : null}
 
         <View style={styles.bottomActions}>
           {isDapperMode ? (
@@ -1404,6 +1423,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
+  },
+  modeError: {
+    position: 'absolute',
+    top: 78,
+    right: 16,
+    left: 16,
+    zIndex: 1102,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#b42318',
+    backgroundColor: '#ffffff',
+    fontSize: 13,
+    textAlign: 'center',
+    elevation: 4,
   },
   disabledButton: {
     opacity: 0.6,
