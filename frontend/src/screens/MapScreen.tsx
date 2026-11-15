@@ -1153,7 +1153,7 @@ export default function MapScreen({
                                 styles.ratingOptionTextSelected,
                             ]}
                           >
-                            {rating}★
+                            {rating}
                           </Text>
                         </Pressable>
                       ))}
@@ -1994,18 +1994,19 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   crispinessStars: {
-    color: '#e0a800',
-    fontSize: 25,
-    letterSpacing: 2,
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
     marginTop: 8,
   },
   crispinessRating: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 14,
     marginTop: 5,
   },
   ratingPrompt: {
-    color: '#6f7a90',
+    color: '#555555',
     fontSize: 14,
     marginTop: 14,
     textAlign: 'center',
@@ -2020,22 +2021,22 @@ const styles = StyleSheet.create({
     minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#dce1ea',
+    borderWidth: 1.5,
+    borderColor: '#ececec',
     borderRadius: 10,
     paddingHorizontal: 8,
   },
   ratingOptionSelected: {
-    borderColor: '#314b9a',
-    backgroundColor: '#f3f5fc',
+    borderColor: '#000000',
+    backgroundColor: '#000000',
   },
   ratingOptionText: {
-    color: '#6f7a90',
+    color: '#000000',
     fontSize: 15,
     fontWeight: '700',
   },
   ratingOptionTextSelected: {
-    color: '#314b9a',
+    color: '#ffffff',
   },
   ratingError: {
     color: '#b42318',
@@ -2044,7 +2045,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   ratingThanks: {
-    color: '#314b9a',
+    color: '#000000',
     fontSize: 15,
     fontWeight: '600',
     marginTop: 14,
