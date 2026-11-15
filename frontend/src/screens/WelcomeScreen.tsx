@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   Image,
   Platform,
@@ -9,6 +10,10 @@ import {
   View,
   type ImageSourcePropType,
 } from 'react-native';
+
+import AnimatedDapHands, {
+  type AnimatedDapHandsHandle,
+} from '../components/AnimatedDapHands';
 
 export type SocialProvider = 'steam' | 'strava' | 'spotify' | 'osu' | 'chess';
 
@@ -23,31 +28,31 @@ const PROVIDERS: readonly ProviderConfig[] = [
   {
     id: 'steam',
     label: 'Continue with Steam',
-    borderColor: '#9AA7B8',
+    borderColor: '#ACB2BE',
     icon: require('../../assets/providers/steam.png'),
   },
   {
     id: 'strava',
     label: 'Continue with Strava',
-    borderColor: '#F7C6B3',
+    borderColor: '#FAC8B8',
     icon: require('../../assets/providers/strava.png'),
   },
   {
     id: 'spotify',
     label: 'Continue with Spotify',
-    borderColor: '#B5ECC7',
+    borderColor: '#B3EEC9',
     icon: require('../../assets/providers/spotify.png'),
   },
   {
     id: 'osu',
     label: 'Continue with OSU',
-    borderColor: '#F2C6DC',
+    borderColor: '#FBD1E4',
     icon: require('../../assets/providers/osu.png'),
   },
   {
     id: 'chess',
     label: 'Continue with Chess.com',
-    borderColor: '#CFE2B8',
+    borderColor: '#D7E8C7',
     icon: require('../../assets/providers/chess.png'),
   },
 ];
@@ -68,6 +73,15 @@ export default function WelcomeScreen({
   onPressProvider,
   onPressSignup,
 }: WelcomeScreenProps) {
+  const dapHandsRef = useRef<AnimatedDapHandsHandle>(null);
+
+  function handleTriggerAndProceed(callback: () => void) {
+    void dapHandsRef.current?.triggerDap();
+    setTimeout(() => {
+      callback();
+    }, 280);
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -81,19 +95,14 @@ export default function WelcomeScreen({
         </View>
 
         <View style={styles.heroContainer}>
-          <Image
-            accessibilityLabel="Two hands reaching for a dap"
-            resizeMode="contain"
-            source={require('../../assets/dap-hands.png')}
-            style={styles.heroImage}
-          />
+          <AnimatedDapHands ref={dapHandsRef} />
         </View>
 
         <View style={styles.actionsSection}>
           <View style={styles.primaryButtons}>
             <Pressable
               accessibilityRole="button"
-              onPress={onPressLogin}
+              onPress={() => handleTriggerAndProceed(onPressLogin)}
               style={({ pressed }) => [
                 styles.primaryButton,
                 pressed && styles.buttonPressed,
@@ -104,7 +113,7 @@ export default function WelcomeScreen({
 
             <Pressable
               accessibilityRole="button"
-              onPress={onPressSignup}
+              onPress={() => handleTriggerAndProceed(onPressSignup)}
               style={({ pressed }) => [
                 styles.primaryButton,
                 pressed && styles.buttonPressed,
@@ -125,10 +134,20 @@ export default function WelcomeScreen({
               <Pressable
                 key={provider.id}
                 accessibilityRole="button"
-                onPress={() => onPressProvider?.(provider.id)}
+                onPress={() =>
+                  handleTriggerAndProceed(() => onPressProvider?.(provider.id))
+                }
                 style={({ pressed }) => [
                   styles.providerButton,
-                  { borderColor: provider.borderColor },
+                  {
+                    borderColor: provider.borderColor,
+                    shadowColor: provider.borderColor,
+                    ...(Platform.OS === 'web'
+                      ? ({
+                          boxShadow: `0 0 10px 1px ${provider.borderColor}`,
+                        } as any)
+                      : {}),
+                  },
                   pressed && styles.buttonPressed,
                 ]}
               >
@@ -202,7 +221,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
-    backgroundColor: '#eaeaea',
+    backgroundColor: '#ececec',
   },
   primaryButtonText: {
     color: '#000000',
@@ -212,7 +231,8 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   buttonPressed: {
-    opacity: 0.78,
+    opacity: 0.85,
+    transform: [{ scale: 0.985 }],
   },
   dividerRow: {
     flexDirection: 'row',
@@ -240,7 +260,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
     borderWidth: 1.5,
-    backgroundColor: '#efefef',
+    backgroundColor: '#ececec',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 7,
+    elevation: 3,
   },
   providerButtonInner: {
     width: 232,
