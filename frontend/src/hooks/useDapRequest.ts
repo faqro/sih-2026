@@ -65,6 +65,9 @@ export function useDapRequest(
   const [isRestoring, setIsRestoring] = useState(false);
   const stateRef = useRef(initialState);
   const socketRef = useRef<WebSocket | null>(null);
+  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
   const locationSubscriptionRef =
     useRef<Location.LocationSubscription | null>(null);
   const locationStartSocketRef = useRef<WebSocket | null>(null);
@@ -72,7 +75,43 @@ export function useDapRequest(
   const isEnabledRef = useRef(enabled);
   const hasRestoredRef = useRef(false);
   const useLiveLocationRef = useRef(true);
+  const reconnectRequestRef = useRef<() => void>(() => {});
   isEnabledRef.current = enabled;
+
+  const stopPingHeartbeat = useCallback(() => {
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+  }, []);
+
+  const stopReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const startPingHeartbeat = useCallback(
+    (socket: WebSocket) => {
+      stopPingHeartbeat();
+      pingIntervalRef.current = setInterval(() => {
+        if (
+          socketRef.current !== socket ||
+          socket.readyState !== WebSocket.OPEN
+        ) {
+          stopPingHeartbeat();
+          return;
+        }
+        try {
+          socket.send(JSON.stringify({ type: 'ping' }));
+        } catch {
+          // Ignore send errors; socket.onclose will handle reconnection.
+        }
+      }, 20000);
+    },
+    [stopPingHeartbeat],
+  );
 
   const updateState = useCallback((update: (current: DapRequestState) => DapRequestState) => {
     const nextState = update(stateRef.current);
@@ -84,6 +123,9 @@ export function useDapRequest(
 
   const closeSocket = useCallback(
     (cancelPending: boolean) => {
+      stopPingHeartbeat();
+      stopReconnectTimer();
+      reconnectAttemptsRef.current = 0;
       const socket = socketRef.current;
       socketRef.current = null;
 
@@ -99,7 +141,7 @@ export function useDapRequest(
         socket.close(1000, 'UberDap request ended.');
       }
     },
-    [],
+    [stopPingHeartbeat, stopReconnectTimer],
   );
 
   const stopLocationUpdates = useCallback(() => {
@@ -423,13 +465,29 @@ export function useDapRequest(
             handleServerMessage(socket, message);
           }
         };
-        socket.onclose = () => {
+        socket.onclose = (event) => {
           if (socketRef.current !== socket) {
             return;
           }
           socketRef.current = null;
+          stopPingHeartbeat();
           stopLocationUpdates();
-          if (stateRef.current.status === 'searching') {
+          const currentStatus = stateRef.current.status;
+          const canReconnect =
+            isMountedRef.current &&
+            isEnabledRef.current &&
+            event.code !== 1000 &&
+            event.code !== 1008 &&
+            event.code !== 4001 &&
+            (currentStatus === 'searching' || currentStatus === 'matched') &&
+            reconnectAttemptsRef.current < 4;
+
+          if (canReconnect) {
+            reconnectRequestRef.current();
+            return;
+          }
+
+          if (currentStatus === 'searching') {
             updateState((current) => ({
               ...current,
               status: 'failed',
@@ -450,6 +508,9 @@ export function useDapRequest(
         if (socket.readyState !== WebSocket.OPEN) {
           throw new Error('The request connection closed unexpectedly.');
         }
+
+        reconnectAttemptsRef.current = 0;
+        startPingHeartbeat(socket);
 
         socket.send(
           JSON.stringify({
@@ -486,19 +547,23 @@ export function useDapRequest(
       closeSocket,
       handleServerMessage,
       startLocationUpdates,
+      startPingHeartbeat,
       stopLocationUpdates,
+      stopPingHeartbeat,
       token,
       updateState,
     ],
   );
 
-  const resumeActiveRequest = useCallback(async () => {
-    if (!isEnabledRef.current || hasRestoredRef.current) {
+  const resumeActiveRequest = useCallback(async (isReconnect = false) => {
+    if (!isEnabledRef.current || (!isReconnect && hasRestoredRef.current)) {
       return;
     }
 
     hasRestoredRef.current = true;
-    setIsRestoring(true);
+    if (!isReconnect) {
+      setIsRestoring(true);
+    }
 
     try {
       const socket = new WebSocket(dapperLocationWebSocketUrl);
@@ -519,19 +584,38 @@ export function useDapRequest(
         return;
       }
 
+      reconnectAttemptsRef.current = 0;
+      startPingHeartbeat(socket);
+
       socket.onmessage = (event) => {
         const message = parseServerMessage(event.data);
         if (message) {
           handleServerMessage(socket, message);
         }
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (socketRef.current !== socket) {
           return;
         }
         socketRef.current = null;
+        stopPingHeartbeat();
         stopLocationUpdates();
-        if (stateRef.current.status === 'searching') {
+        const currentStatus = stateRef.current.status;
+        const canReconnect =
+          isMountedRef.current &&
+          isEnabledRef.current &&
+          event.code !== 1000 &&
+          event.code !== 1008 &&
+          event.code !== 4001 &&
+          (currentStatus === 'searching' || currentStatus === 'matched') &&
+          reconnectAttemptsRef.current < 4;
+
+        if (canReconnect) {
+          reconnectRequestRef.current();
+          return;
+        }
+
+        if (currentStatus === 'searching') {
           updateState((current) => ({
             ...current,
             status: 'failed',
@@ -553,6 +637,17 @@ export function useDapRequest(
         throw new Error('The request connection closed unexpectedly.');
       }
     } catch (error) {
+      if (
+        isReconnect &&
+        isMountedRef.current &&
+        isEnabledRef.current &&
+        (stateRef.current.status === 'searching' ||
+          stateRef.current.status === 'matched') &&
+        reconnectAttemptsRef.current < 4
+      ) {
+        reconnectRequestRef.current();
+        return;
+      }
       closeSocket(false);
       if (isMountedRef.current) {
         updateState((current) => ({
@@ -564,11 +659,36 @@ export function useDapRequest(
         }));
       }
     } finally {
-      if (isMountedRef.current) {
+      if (!isReconnect && isMountedRef.current) {
         setIsRestoring(false);
       }
     }
-  }, [closeSocket, handleServerMessage, stopLocationUpdates, token, updateState]);
+  }, [
+    closeSocket,
+    handleServerMessage,
+    startPingHeartbeat,
+    stopLocationUpdates,
+    stopPingHeartbeat,
+    token,
+    updateState,
+  ]);
+
+  reconnectRequestRef.current = () => {
+    const delayMs = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 8000);
+    reconnectAttemptsRef.current += 1;
+    stopReconnectTimer();
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (
+        isMountedRef.current &&
+        isEnabledRef.current &&
+        (stateRef.current.status === 'searching' ||
+          stateRef.current.status === 'matched')
+      ) {
+        void resumeActiveRequest(true);
+      }
+    }, delayMs);
+  };
 
   useEffect(() => {
     isMountedRef.current = true;
