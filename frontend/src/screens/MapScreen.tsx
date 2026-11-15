@@ -504,7 +504,7 @@ export default function MapScreen({
     setIsDapperLocationReady(true);
     setLocationPrompt(null);
     setLocationTrackingRevision((revision) => revision + 1);
-    void goOnline();
+    void goOnline(result.coordinates);
   }
 
   function handleGoOffline() {
