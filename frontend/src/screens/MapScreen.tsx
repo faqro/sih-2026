@@ -27,8 +27,34 @@ import {
 import { useDapperLocationStream } from '../hooks/useDapperLocationStream';
 import MapSurface from './MapSurface';
 
+const displayFontFamily = Platform.select({
+  web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  default: undefined,
+});
+
 const dapOptions = ['UberDap', 'UberDap Plus', 'UberDap Deluxe'] as const;
 type DapOption = (typeof dapOptions)[number];
+
+const DAP_DETAILS: Record<
+  DapOption,
+  { tag: string; time: string; description: string }
+> = {
+  UberDap: {
+    tag: 'CLASSIC',
+    time: '2 min',
+    description: 'Crisp single-contact street snap.',
+  },
+  'UberDap Plus': {
+    tag: 'POPULAR',
+    time: '3 min',
+    description: 'Two-handed grip, slide & shoulder tap.',
+  },
+  'UberDap Deluxe': {
+    tag: 'VIP PROTOCOL',
+    time: '5 min',
+    description: '5-step synchronized secret routine.',
+  },
+};
 
 type MapScreenProps = {
   activeMode: AppMode;
@@ -971,6 +997,7 @@ export default function MapScreen({
                 <View style={styles.options}>
                   {dapOptions.map((option) => {
                     const isSelected = selectedDap === option;
+                    const details = DAP_DETAILS[option];
 
                     return (
                       <Pressable
@@ -979,27 +1006,50 @@ export default function MapScreen({
                         accessibilityState={{ checked: isSelected }}
                         key={option}
                         onPress={() => setSelectedDap(option)}
-                        style={[
+                        style={({ pressed }) => [
                           styles.optionButton,
                           isSelected && styles.optionButtonSelected,
+                          pressed && styles.buttonPressed,
                         ]}
                       >
-                        <View
-                          style={[
-                            styles.radio,
-                            isSelected && styles.radioSelected,
-                          ]}
-                        >
-                          {isSelected ? <View style={styles.radioDot} /> : null}
+                        <View style={styles.optionLeft}>
+                          <View style={styles.optionTitleRow}>
+                            <Text style={styles.optionTitle}>{option}</Text>
+                            <View
+                              style={[
+                                styles.tierBadge,
+                                isSelected
+                                  ? styles.tierBadgeSelected
+                                  : styles.tierBadgeDefault,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.tierBadgeText,
+                                  isSelected
+                                    ? styles.tierBadgeTextSelected
+                                    : styles.tierBadgeTextDefault,
+                                ]}
+                              >
+                                {details.tag}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.optionDescription}>
+                            {details.description}
+                          </Text>
                         </View>
-                        <Text
-                          style={[
-                            styles.optionText,
-                            isSelected && styles.optionTextSelected,
-                          ]}
-                        >
-                          {option}
-                        </Text>
+                        <View style={styles.optionRight}>
+                          <Text style={styles.optionTime}>{details.time}</Text>
+                          <View
+                            style={[
+                              styles.radio,
+                              isSelected && styles.radioSelected,
+                            ]}
+                          >
+                            {isSelected ? <View style={styles.radioDot} /> : null}
+                          </View>
+                        </View>
                       </Pressable>
                     );
                   })}
@@ -1018,7 +1068,7 @@ export default function MapScreen({
                     <ActivityIndicator color="#ffffff" />
                   ) : (
                     <Text style={styles.confirmButtonText}>
-                      Confirm UberDap
+                      Confirm {selectedDap}
                     </Text>
                   )}
                 </Pressable>
@@ -1026,7 +1076,7 @@ export default function MapScreen({
             ) : dapRequest.status === 'connecting' ||
               dapRequest.status === 'searching' ? (
               <View style={styles.matchingContent}>
-                <ActivityIndicator color="#314b9a" size="large" />
+                <ActivityIndicator color="#000000" size="large" />
                 {dapRequest.status === 'connecting' ? (
                   <Text style={styles.matchingText}>
                     Connecting to the dapper network...
@@ -1334,14 +1384,8 @@ export default function MapScreen({
 }
 
 function formatCrispinessStars(rating: number): string {
-  const roundedRating = Math.max(0, Math.min(5, Math.round(rating * 2) / 2));
-  const fullStars = Math.floor(roundedRating);
-  const hasHalfStar = roundedRating - fullStars >= 0.5;
-  const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
-
-  return `${'★'.repeat(fullStars)}${hasHalfStar ? '½' : ''}${'☆'.repeat(
-    emptyStars,
-  )}`;
+  const roundedRating = Math.max(0, Math.min(5, Math.round(rating * 10) / 10));
+  return `${roundedRating.toFixed(1)} / 5.0 Rating`;
 }
 
 const styles = StyleSheet.create({
@@ -1778,37 +1822,92 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   optionButton: {
-    minHeight: 58,
+    minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#dce1ea',
-    borderRadius: 14,
+    justifyContent: 'space-between',
+    borderWidth: 1.5,
+    borderColor: '#ececec',
+    borderRadius: 12,
     paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#ffffff',
   },
   optionButtonSelected: {
-    borderColor: '#314b9a',
-    backgroundColor: '#f3f5fc',
+    borderColor: '#000000',
+    backgroundColor: '#fafafa',
+  },
+  optionLeft: {
+    flex: 1,
+    gap: 4,
+  },
+  optionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  optionTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  tierBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  tierBadgeDefault: {
+    backgroundColor: '#ececec',
+  },
+  tierBadgeSelected: {
+    backgroundColor: '#000000',
+  },
+  tierBadgeText: {
+    fontFamily: displayFontFamily,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  tierBadgeTextDefault: {
+    color: '#555555',
+  },
+  tierBadgeTextSelected: {
+    color: '#ffffff',
+  },
+  optionDescription: {
+    color: '#777777',
+    fontFamily: displayFontFamily,
+    fontSize: 13,
+  },
+  optionRight: {
+    alignItems: 'flex-end',
+    gap: 6,
+    marginLeft: 12,
+  },
+  optionTime: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 13,
+    fontWeight: '700',
   },
   radio: {
-    width: 22,
-    height: 22,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#cccccc',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#aab3c3',
-    borderRadius: 11,
-    marginRight: 13,
   },
   radioSelected: {
-    borderColor: '#314b9a',
+    borderColor: '#000000',
   },
   radioDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#314b9a',
+    backgroundColor: '#000000',
   },
   serviceCheckbox: {
     width: 22,
@@ -1816,13 +1915,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#aab3c3',
+    borderColor: '#cccccc',
     borderRadius: 6,
     marginRight: 13,
   },
   serviceCheckboxSelected: {
-    borderColor: '#314b9a',
-    backgroundColor: '#314b9a',
+    borderColor: '#000000',
+    backgroundColor: '#000000',
   },
   serviceCheckmark: {
     width: 8,
@@ -1831,20 +1930,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   optionText: {
-    color: '#34425c',
+    color: '#000000',
     fontSize: 15,
     fontWeight: '600',
   },
   optionTextSelected: {
-    color: '#314b9a',
+    color: '#000000',
+    fontWeight: '700',
   },
   confirmButton: {
     minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 13,
+    borderRadius: 12,
     marginTop: 16,
-    backgroundColor: '#314b9a',
+    backgroundColor: '#000000',
   },
   confirmButtonText: {
     color: '#ffffff',

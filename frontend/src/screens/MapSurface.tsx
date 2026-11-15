@@ -77,15 +77,26 @@ function toPairRegion(
 }
 
 const minimalMapStyle: MapStyleElement[] = [
-  { elementType: 'geometry', stylers: [{ color: '#f3f5f6' }] },
+  { elementType: 'geometry', stylers: [{ color: '#f3f4f6' }] },
   { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#70777c' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#666666' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#f3f4f6' }] },
   { featureType: 'administrative', stylers: [{ visibility: 'off' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   {
     featureType: 'road',
     elementType: 'geometry',
     stylers: [{ color: '#ffffff' }],
+  },
+  {
+    featureType: 'road.arterial',
+    elementType: 'geometry',
+    stylers: [{ color: '#ffffff' }],
+  },
+  {
+    featureType: 'road.highway',
+    elementType: 'geometry',
+    stylers: [{ color: '#dadada' }],
   },
   {
     featureType: 'road',
@@ -96,7 +107,7 @@ const minimalMapStyle: MapStyleElement[] = [
   {
     featureType: 'water',
     elementType: 'geometry',
-    stylers: [{ color: '#dce7ed' }],
+    stylers: [{ color: '#d0d0d0' }],
   },
 ];
 

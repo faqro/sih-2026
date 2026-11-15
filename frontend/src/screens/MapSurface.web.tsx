@@ -92,6 +92,13 @@ function MapViewportController({
   return null;
 }
 
+const UBER_BW_TILE_CSS = `
+  .leaflet-tile-pane {
+    filter: grayscale(100%) contrast(106%) brightness(98%);
+    -webkit-filter: grayscale(100%) contrast(106%) brightness(98%);
+  }
+`;
+
 function MapSurface({
   ownLocation,
   counterpartLocation,
@@ -110,9 +117,11 @@ function MapSurface({
       zoomControl={false}
       style={styles.map}
     >
+      <style>{UBER_BW_TILE_CSS}</style>
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        subdomains="abcd"
+        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
       />
       <MapViewportController
         ownLocation={ownLocation}
@@ -139,7 +148,7 @@ function MapSurface({
           ]}
           pathOptions={{
             color: '#ffffff',
-            fillColor: '#314b9a',
+            fillColor: '#000000',
             fillOpacity: 1,
             weight: 5,
           }}

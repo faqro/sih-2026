@@ -89,7 +89,7 @@ export default function AuthFlowScreen({
   // Single master transition progress (0 = Welcome Screen, 1 = Auth Form)
   const transitionProgress = useRef(new Animated.Value(0)).current;
 
-  // Forward transition: Open -> Closed Dap, Welcome options fade away, Form fades in
+  // Forward transition: Open -> Hands move, touch, slap, clasp -> Form surfaces
   function openAuth(targetMode: AuthMode) {
     setAuthMode(targetMode);
     onClearError();
@@ -97,19 +97,19 @@ export default function AuthFlowScreen({
 
     Animated.timing(transitionProgress, {
       toValue: 1,
-      duration: 440,
+      duration: 560,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
       useNativeDriver: true,
     }).start();
   }
 
-  // Reverse transition: Closed -> Open Dap, Form fades away, Welcome options fade back in
+  // Reverse transition: Clasp unlocks -> Hands slide apart to open -> Welcome options surface
   function closeAuth() {
     onClearError();
 
     Animated.timing(transitionProgress, {
       toValue: 0,
-      duration: 440,
+      duration: 520,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
       useNativeDriver: true,
     }).start(({ finished }) => {
@@ -128,54 +128,54 @@ export default function AuthFlowScreen({
     onClearError();
   }
 
-  // Interpolations for Hand Animation
-  // Left hand glides right to center
+  // Hand Motion Interpolations:
+  // Both hands actively travel inward across the gap, fingertips meet & cross, and palms touch!
   const leftHandTranslateX = transitionProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 34],
+    inputRange: [0, 0.74, 1],
+    outputRange: [0, 56, 56],
   });
 
-  // Right hand glides left to center
   const rightHandTranslateX = transitionProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -34],
+    inputRange: [0, 0.74, 1],
+    outputRange: [0, -56, -56],
   });
 
-  // Open hands crossfade out cleanly as they meet in center
+  // Open hands stay 100% visible while traveling and touching;
+  // right at the moment of contact (0.74 - 0.82), they snap solidly into the clasped grip
   const openHandsOpacity = transitionProgress.interpolate({
-    inputRange: [0, 0.45, 0.8, 1],
+    inputRange: [0, 0.74, 0.82, 1],
     outputRange: [1, 1, 0, 0],
   });
 
-  // Closed hands crossfade in at exact same scale and size
+  // Clasped hands snap in at contact point and remain locked
   const closedHandsOpacity = transitionProgress.interpolate({
-    inputRange: [0, 0.45, 0.8, 1],
+    inputRange: [0, 0.74, 0.82, 1],
     outputRange: [0, 0, 1, 1],
   });
 
-  // Welcome options layer fade out & slide down
+  // Welcome options layer sinks directly into the white background (NO vertical or horizontal translation!)
   const welcomeOpacity = transitionProgress.interpolate({
-    inputRange: [0, 0.35, 1],
+    inputRange: [0, 0.42, 1],
     outputRange: [1, 0, 0],
   });
-  const welcomeTranslateY = transitionProgress.interpolate({
-    inputRange: [0, 0.35, 1],
-    outputRange: [0, 14, 14],
+  const welcomeScale = transitionProgress.interpolate({
+    inputRange: [0, 0.42, 1],
+    outputRange: [1, 0.95, 0.95],
   });
 
-  // Auth form layer fade in & slide up
+  // Auth form layer surfaces directly from the white background into place (NO vertical or horizontal translation!)
   const authOpacity = transitionProgress.interpolate({
-    inputRange: [0, 0.5, 1],
+    inputRange: [0, 0.58, 1],
     outputRange: [0, 0, 1],
   });
-  const authTranslateY = transitionProgress.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [14, 14, 0],
+  const authScale = transitionProgress.interpolate({
+    inputRange: [0, 0.58, 1],
+    outputRange: [0.95, 0.95, 1],
   });
 
   // Back button opacity
   const backButtonOpacity = transitionProgress.interpolate({
-    inputRange: [0, 0.5, 1],
+    inputRange: [0, 0.6, 1],
     outputRange: [0, 0, 1],
   });
 
@@ -218,78 +218,76 @@ export default function AuthFlowScreen({
             </Animated.View>
           </View>
 
-          {/* Hand Illustration Area (Smooth continuous morph & glide) */}
+          {/* Hand Illustration Area (Hands actually sweep inward, touch, and clasp) */}
           <View style={styles.heroContainer}>
             <View style={styles.handsFrame}>
-              {/* OPEN HANDS (Glide together on forward, glide apart on reverse) */}
+              {/* OPEN HANDS LAYER (Hands travel from rest across the gap and touch palm-to-palm) */}
               <Animated.View
                 pointerEvents="none"
                 style={[
                   StyleSheet.absoluteFill,
-                  styles.openHandsLayer,
                   { opacity: openHandsOpacity },
                 ]}
               >
-                {/* Left Hand */}
+                {/* Left Hand with extended forearm anchored to left edge */}
                 <Animated.View
                   style={[
-                    styles.leftHandWrapper,
+                    styles.handFullCanvasWrapper,
                     { transform: [{ translateX: leftHandTranslateX }] },
                   ]}
                 >
                   <Image
                     accessibilityIgnoresInvertColors
                     resizeMode="contain"
-                    source={require('../../assets/dap-hand-left.png')}
+                    source={require('../../assets/dap_hand_left_std.png')}
                     style={styles.handImage}
                   />
                 </Animated.View>
 
-                {/* Right Hand */}
+                {/* Right Hand with extended forearm anchored to right edge */}
                 <Animated.View
                   style={[
-                    styles.rightHandWrapper,
+                    styles.handFullCanvasWrapper,
                     { transform: [{ translateX: rightHandTranslateX }] },
                   ]}
                 >
                   <Image
                     accessibilityIgnoresInvertColors
                     resizeMode="contain"
-                    source={require('../../assets/dap-hand-right.png')}
+                    source={require('../../assets/dap_hand_right_std.png')}
                     style={styles.handImage}
                   />
                 </Animated.View>
               </Animated.View>
 
-              {/* CLOSED HANDS (Crossfades in with exact same size and zero recoil/glitch) */}
+              {/* CLASPED HANDS LAYER (Locked clasp grip replacing touching hands) */}
               <Animated.View
                 pointerEvents="none"
                 style={[
-                  StyleSheet.absoluteFill,
-                  styles.closedHandsLayer,
+                  styles.handFullCanvasWrapper,
                   { opacity: closedHandsOpacity },
                 ]}
               >
                 <Image
                   accessibilityIgnoresInvertColors
                   resizeMode="contain"
-                  source={require('../../assets/dap-hands-clasped.png')}
+                  source={require('../../assets/dap_hands_clasped_std.png')}
                   style={styles.handImage}
                 />
               </Animated.View>
             </View>
           </View>
 
-          {/* Interactive Content Stage (Crossfading layers) */}
+          {/* Interactive Content Stage (Sinking into white / surfacing from white) */}
           <View style={styles.stageContainer}>
-            {/* LAYER 1: WELCOME OPTIONS (Fades out smoothly when Log in / Sign up is tapped) */}
+            {/* LAYER 1: WELCOME OPTIONS (Sinks directly into the white background) */}
             <Animated.View
               pointerEvents={isAuthOpen ? 'none' : 'auto'}
               style={[
                 styles.layer,
                 {
                   opacity: welcomeOpacity,
-                  transform: [{ translateY: welcomeTranslateY }],
+                  transform: [{ scale: welcomeScale }],
                 },
               ]}
             >
@@ -398,14 +396,14 @@ export default function AuthFlowScreen({
               ) : null}
             </Animated.View>
 
-            {/* LAYER 2: AUTH FORM (Fades in smoothly with the closed dap hands) */}
+            {/* LAYER 2: AUTH FORM (Surfaces directly from the white background) */}
             <Animated.View
               pointerEvents={isAuthOpen ? 'auto' : 'none'}
               style={[
                 styles.layer,
                 {
                   opacity: authOpacity,
-                  transform: [{ translateY: authTranslateY }],
+                  transform: [{ scale: authScale }],
                 },
               ]}
             >
@@ -566,30 +564,16 @@ const styles = StyleSheet.create({
   },
   handsFrame: {
     width: '100%',
-    aspectRatio: 942 / 298,
+    aspectRatio: 471 / 195,
     position: 'relative',
     overflow: 'hidden',
   },
-  openHandsLayer: {
-    flexDirection: 'row',
-  },
-  leftHandWrapper: {
+  handFullCanvasWrapper: {
     position: 'absolute',
-    left: 0,
     top: 0,
     bottom: 0,
-    width: '50%',
-  },
-  rightHandWrapper: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: '50.3%',
-  },
-  closedHandsLayer: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    left: '-42.46%',
+    width: '184.93%',
   },
   handImage: {
     width: '100%',
