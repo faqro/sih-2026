@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -31,6 +32,7 @@ import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
   type OnboardingAction,
 } from './src/screens/OnboardingModeScreen';
+import WelcomeScreen from './src/screens/WelcomeScreen';
 import {
   clearAuthToken,
   loadAuthToken,
@@ -41,7 +43,10 @@ type SignedInUser = AuthUser & {
   token: string;
 };
 
+type UnauthenticatedView = 'welcome' | 'form';
+
 export default function App() {
+  const [authView, setAuthView] = useState<UnauthenticatedView>('welcome');
   const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -102,6 +107,7 @@ export default function App() {
     clearAuthToken();
     setUser(null);
     setOnboardingAction(null);
+    setAuthView('welcome');
     setError(nextError);
   }
 
@@ -137,6 +143,12 @@ export default function App() {
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
     setError(null);
+  }
+
+  function openAuthForm(nextMode: AuthMode) {
+    setMode(nextMode);
+    setError(null);
+    setAuthView('form');
   }
 
   async function handleOnboardingChoice(
@@ -227,6 +239,7 @@ export default function App() {
       await deleteAccount(user.token);
       clearAuthToken();
       setUser(null);
+      setAuthView('welcome');
       setMode('login');
       setUsername('');
       setPassword('');
@@ -297,30 +310,86 @@ export default function App() {
     );
   }
 
+  if (authView === 'welcome') {
+    return (
+      <View style={styles.page}>
+        <View style={[styles.app, styles.welcomeApp]}>
+          <StatusBar style="dark" />
+          <WelcomeScreen
+            onPressLogin={() => openAuthForm('login')}
+            onPressSignup={() => openAuthForm('signup')}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  function renderAuthError(message: string) {
+    const didYouMeanIndex = message.indexOf('Did you mean');
+
+    if (didYouMeanIndex > 0) {
+      const primary = message.slice(0, didYouMeanIndex).trim();
+      const suggestion = message.slice(didYouMeanIndex).trim();
+
+      return (
+        <View style={styles.errorBlock}>
+          <Text style={styles.error}>{primary}</Text>
+          <Text style={[styles.error, styles.errorSuggestion]}>{suggestion}</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.errorBlock}>
+        <Text style={styles.error}>{message}</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.page}>
-      <SafeAreaView style={styles.app}>
+      <SafeAreaView style={[styles.app, styles.welcomeApp]}>
         <StatusBar style="dark" />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.keyboardAvoider}
         >
-          <View style={styles.content}>
-            <View style={styles.brandMark}>
+          <ScrollView
+            bounces={false}
+            contentContainerStyle={styles.authScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.authHeaderRow}>
+              <View>
+                <Text style={styles.welcomeTitle}>Welcome to</Text>
+                <Text style={styles.brandTitle}>UberDaps</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSubmitting}
+                hitSlop={8}
+                onPress={() => {
+                  setError(null);
+                  setAuthView('welcome');
+                }}
+                style={styles.backButton}
+              >
+                <Text style={styles.backButtonText}>← Back</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.claspedHandsContainer}>
               <Image
-                accessibilityLabel="Uber DAPS logo"
-                resizeMode="cover"
-                source={require('./assets/uberdaps-logo.jpg')}
-                style={styles.brandMarkImage}
+                accessibilityLabel="Two hands clasping in a dap"
+                resizeMode="contain"
+                source={require('./assets/dap-hands-clasped.png')}
+                style={styles.claspedHandsImage}
               />
             </View>
-            <Text style={styles.title}>
-              {isLogin ? 'Welcome back' : 'Create your account'}
-            </Text>
-            <Text style={styles.subtitle}>
-              {isLogin
-                ? 'Sign in to continue to your workspace.'
-                : 'Use a username and password to get started.'}
+
+            <Text style={styles.authSectionTitle}>
+              {isLogin ? 'Log in to UberDaps' : 'Sign up for UberDaps'}
             </Text>
 
             <View style={styles.form}>
@@ -331,7 +400,7 @@ export default function App() {
                 autoCorrect={false}
                 editable={!isSubmitting}
                 onChangeText={setUsername}
-                placeholder="your_username"
+                placeholder=""
                 placeholderTextColor="#8b94a7"
                 style={styles.input}
                 value={username}
@@ -342,21 +411,22 @@ export default function App() {
                 autoComplete={isLogin ? 'current-password' : 'new-password'}
                 editable={!isSubmitting}
                 onChangeText={setPassword}
-                placeholder="At least 8 characters"
+                placeholder=""
                 placeholderTextColor="#8b94a7"
                 secureTextEntry
                 style={styles.input}
                 value={password}
               />
 
-              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {error ? renderAuthError(error) : null}
 
               <Pressable
                 accessibilityRole="button"
                 disabled={isSubmitting}
                 onPress={() => void submit()}
-                style={[
+                style={({ pressed }) => [
                   styles.primaryButton,
+                  pressed && !isSubmitting && styles.primaryButtonPressed,
                   isSubmitting && styles.primaryButtonDisabled,
                 ]}
               >
@@ -364,7 +434,7 @@ export default function App() {
                   <ActivityIndicator color="#ffffff" />
                 ) : (
                   <Text style={styles.primaryButtonText}>
-                    {isLogin ? 'Sign in' : 'Create account'}
+                    {isLogin ? 'Log in' : 'Sign up'}
                   </Text>
                 )}
               </Pressable>
@@ -379,16 +449,21 @@ export default function App() {
                 onPress={() => switchMode(isLogin ? 'signup' : 'login')}
               >
                 <Text style={styles.modeLink}>
-                  {isLogin ? 'Create account' : 'Sign in'}
+                  {isLogin ? 'Sign up' : 'Log in'}
                 </Text>
               </Pressable>
             </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
   );
 }
+
+const displayFontFamily = Platform.select({
+  web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  default: undefined,
+});
 
 const styles = StyleSheet.create({
   page: {
@@ -407,6 +482,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
+  welcomeApp: {
+    backgroundColor: '#ffffff',
+  },
   loadingState: {
     flex: 1,
     alignItems: 'center',
@@ -421,92 +499,141 @@ const styles = StyleSheet.create({
   keyboardAvoider: {
     flex: 1,
   },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-    paddingBottom: 44,
-  },
-  brandMark: {
-    width: 52,
-    height: 52,
-    overflow: 'hidden',
-    borderRadius: 17,
-    marginBottom: 26,
-    backgroundColor: '#000000',
-  },
-  brandMarkImage: {
-    width: '100%',
-    height: '100%',
-  },
-  title: {
-    color: '#172033',
-    fontSize: 30,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-    marginBottom: 9,
-  },
-  subtitle: {
-    color: '#6f7a90',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  form: {
-    marginTop: 32,
-  },
-  label: {
-    color: '#34425c',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  input: {
-    height: 52,
-    borderWidth: 1,
-    borderColor: '#dce1ea',
-    borderRadius: 13,
-    paddingHorizontal: 15,
-    marginBottom: 20,
-    color: '#172033',
-    fontSize: 16,
+  authScrollContent: {
+    flexGrow: 1,
+    paddingTop: 22,
+    paddingBottom: 32,
     backgroundColor: '#ffffff',
   },
+  authHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 22,
+  },
+  welcomeTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 38,
+    fontWeight: '400',
+    lineHeight: 44,
+    letterSpacing: -0.9,
+  },
+  brandTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 42,
+    fontWeight: '700',
+    lineHeight: 46,
+    letterSpacing: -1.1,
+  },
+  backButton: {
+    paddingTop: 6,
+  },
+  backButtonText: {
+    color: '#555555',
+    fontFamily: displayFontFamily,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  claspedHandsContainer: {
+    width: '100%',
+    marginTop: 18,
+    marginBottom: 24,
+  },
+  claspedHandsImage: {
+    width: '100%',
+    height: undefined,
+    aspectRatio: 471 / 156,
+  },
+  authSectionTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+    textAlign: 'center',
+    marginBottom: 28,
+    paddingHorizontal: 20,
+  },
+  form: {
+    paddingHorizontal: 20,
+  },
+  label: {
+    color: '#555555',
+    fontFamily: displayFontFamily,
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 6,
+  },
+  input: {
+    height: 60,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    marginBottom: 22,
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 16,
+    backgroundColor: '#eaeaea',
+  },
+  errorBlock: {
+    alignItems: 'center',
+    gap: 8,
+    marginTop: -6,
+    marginBottom: 22,
+  },
   error: {
-    color: '#b42318',
+    color: '#e53935',
+    fontFamily: displayFontFamily,
     fontSize: 13,
+    fontWeight: '500',
     lineHeight: 19,
-    marginTop: -7,
-    marginBottom: 14,
+    textAlign: 'center',
+  },
+  errorSuggestion: {
+    fontSize: 16,
+    lineHeight: 22,
+    textDecorationLine: 'underline',
   },
   primaryButton: {
+    alignSelf: 'center',
+    minWidth: 180,
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 13,
+    borderRadius: 12,
+    paddingHorizontal: 40,
     marginTop: 4,
-    backgroundColor: '#314b9a',
+    backgroundColor: '#000000',
+  },
+  primaryButtonPressed: {
+    opacity: 0.82,
   },
   primaryButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.65,
   },
   primaryButtonText: {
     color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700',
+    fontFamily: displayFontFamily,
+    fontSize: 24,
+    fontWeight: '600',
+    letterSpacing: -0.4,
   },
   modePrompt: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 5,
-    marginTop: 25,
+    marginTop: 22,
   },
   modePromptText: {
-    color: '#6f7a90',
-    fontSize: 14,
+    color: '#666666',
+    fontFamily: displayFontFamily,
+    fontSize: 13,
   },
   modeLink: {
-    color: '#405bb6',
-    fontSize: 14,
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 13,
     fontWeight: '700',
   },
 });

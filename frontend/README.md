@@ -9,7 +9,7 @@ Expo React Native application configured for web by default.
 - `npm run export:web` generates a static web export in `dist`.
 - `npm run android` or `npm run ios` starts the native targets.
 
-The user map requests foreground location permission. On web, the map uses
+Dapper mode requests foreground location permission only when going online. On web, the map uses
 OpenStreetMap; native iOS and Android use `react-native-maps`.
 Native maps use Google Maps with a minimal style. Set `GOOGLE_MAPS_API_KEY` in
 `.env` before creating native builds; restrict the key to this app's iOS and

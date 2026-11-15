@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Linking,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -13,6 +15,12 @@ import {
 
 import type { AppMode, DapService } from '../api/auth';
 import { useDapRequest } from '../hooks/useDapRequest';
+import {
+  resolveDapperOnlineLocation,
+  resolveWebDapperOnlineLocation,
+  type Coordinates,
+  type DapperLocationFailureReason,
+} from '../location/dapperLocation';
 import { useDapperLocationStream } from '../hooks/useDapperLocationStream';
 import MapSurface from './MapSurface';
 
@@ -34,9 +42,10 @@ type MapScreenProps = {
   token: string;
 };
 
-type Coordinates = {
-  latitude: number;
-  longitude: number;
+type LocationPromptState = {
+  reason: DapperLocationFailureReason;
+  canOpenSettings: boolean;
+  message: string;
 };
 
 const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
@@ -57,9 +66,14 @@ export default function MapScreen({
   token,
 }: MapScreenProps) {
   const [location, setLocation] = useState<Coordinates | null>(null);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [isLocating, setIsLocating] = useState(true);
-  const [attempt, setAttempt] = useState(0);
+  const [isDapperLocationReady, setIsDapperLocationReady] = useState(false);
+  const [isGoingOnline, setIsGoingOnline] = useState(false);
+  const [isRequestingLocation, setIsRequestingLocation] = useState(false);
+  const [locationPrompt, setLocationPrompt] =
+    useState<LocationPromptState | null>(null);
+  const [requestLocationError, setRequestLocationError] = useState<
+    string | null
+  >(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
@@ -76,6 +90,11 @@ export default function MapScreen({
   const dapperContentRef = useRef(false);
   const dapperSheetOpenRef = useRef(false);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+  const activeModeRef = useRef(activeMode);
+  const goOnlineRequestIdRef = useRef(0);
+  const requestLocationRequestIdRef = useRef(0);
+  activeModeRef.current = activeMode;
   const sheetTranslateY = sheetProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [sheetHeight, 0],
@@ -98,65 +117,218 @@ export default function MapScreen({
     goOnline,
     isResponding,
     isConnecting,
-    isOnline,
+    isOnline: isLocationStreamOnline,
     markDapDelivered,
     offer,
   } = useDapperLocationStream(
     token,
     activeMode === 'dapper' && offeredServices.length > 0,
   );
+  const isDapperMode = activeMode === 'dapper';
+  const isDapperOnline = isDapperLocationReady && isLocationStreamOnline;
   const hasDapperContent =
-    activeMode === 'dapper' && (offer !== null || activeDap !== null);
+    isDapperMode && (offer !== null || activeDap !== null);
+  const displayedLocation = isDapperMode
+    ? isDapperOnline
+      ? location
+      : null
+    : location;
+  const mapLocation = isDapperMode
+    ? activeDap?.location ?? offer?.location ?? displayedLocation
+    : displayedLocation;
   dapperContentRef.current = hasDapperContent;
 
+  function resetDapperLocationState() {
+    goOnlineRequestIdRef.current += 1;
+    setIsDapperLocationReady(false);
+    setIsGoingOnline(false);
+    setLocation(null);
+    setLocationPrompt(null);
+    goOffline();
+  }
+
   useEffect(() => {
-    let isActive = true;
-
-    async function locateUser() {
-      setIsLocating(true);
-      setLocationError(null);
-
-      try {
-        const permission = await Location.requestForegroundPermissionsAsync();
-
-        if (permission.status !== 'granted') {
-          if (isActive) {
-            setLocationError(
-              'Location access is needed to show your map. Enable it in your device settings and try again.',
-            );
-          }
-          return;
-        }
-
-        const currentLocation = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-
-        if (isActive) {
-          setLocation({
-            latitude: currentLocation.coords.latitude,
-            longitude: currentLocation.coords.longitude,
-          });
-        }
-      } catch {
-        if (isActive) {
-          setLocationError(
-            'Unable to get your location. Check that location services are enabled and try again.',
-          );
-        }
-      } finally {
-        if (isActive) {
-          setIsLocating(false);
-        }
-      }
-    }
-
-    void locateUser();
+    isMountedRef.current = true;
 
     return () => {
-      isActive = false;
+      isMountedRef.current = false;
+      goOnlineRequestIdRef.current += 1;
     };
-  }, [attempt]);
+  }, []);
+
+  useEffect(() => {
+    activeModeRef.current = activeMode;
+
+    if (activeMode !== 'dapper') {
+      goOnlineRequestIdRef.current += 1;
+      setIsDapperLocationReady(false);
+      setIsGoingOnline(false);
+      setLocation(null);
+      setLocationPrompt(null);
+    }
+
+    if (activeMode !== 'order') {
+      requestLocationRequestIdRef.current += 1;
+      setIsRequestingLocation(false);
+      setRequestLocationError(null);
+    }
+
+    if (activeMode !== 'order') {
+      sheetProgress.stopAnimation();
+      sheetProgress.setValue(0);
+      setIsRequestMenuOpen(false);
+    }
+  }, [activeMode, sheetProgress]);
+
+  function handleSelectMode(nextMode: AppMode) {
+    setIsMenuOpen(false);
+
+    if (nextMode === activeMode) {
+      return;
+    }
+
+    if (nextMode === 'dapper' && offeredServices.length === 0) {
+      openPreferences();
+      return;
+    }
+
+    activeModeRef.current = nextMode;
+    if (nextMode !== 'order') {
+      requestLocationRequestIdRef.current += 1;
+    }
+
+    if (nextMode !== 'dapper') {
+      resetDapperLocationState();
+    }
+
+    if (nextMode !== 'order') {
+      sheetProgress.stopAnimation();
+      sheetProgress.setValue(0);
+      setIsRequestMenuOpen(false);
+    }
+
+    onChangeMode(nextMode);
+  }
+
+  async function handleGoOnline() {
+    if (
+      isSubmitting ||
+      activeModeRef.current !== 'dapper' ||
+      isDapperOnline ||
+      isGoingOnline
+    ) {
+      return;
+    }
+
+    if (offeredServices.length === 0) {
+      openPreferences();
+      return;
+    }
+
+    const requestId = ++goOnlineRequestIdRef.current;
+    const isCurrentAttempt = () =>
+      isMountedRef.current &&
+      activeModeRef.current === 'dapper' &&
+      goOnlineRequestIdRef.current === requestId;
+
+    setIsMenuOpen(false);
+    setLocationPrompt(null);
+    setIsGoingOnline(true);
+
+    const result =
+      Platform.OS === 'web'
+        ? await resolveWebDapperOnlineLocation()
+        : await resolveDapperOnlineLocation(
+            {
+              hasServicesEnabledAsync: () => Location.hasServicesEnabledAsync(),
+              getForegroundPermissionsAsync: () =>
+                Location.getForegroundPermissionsAsync(),
+              requestForegroundPermissionsAsync: () =>
+                Location.requestForegroundPermissionsAsync(),
+              getCurrentPositionAsync: () =>
+                Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.Balanced,
+                }),
+            },
+            { isNative: true },
+          );
+
+    if (!isCurrentAttempt()) {
+      return;
+    }
+
+    setIsGoingOnline(false);
+
+    if (!result.ok) {
+      setIsDapperLocationReady(false);
+      setLocation(null);
+      setLocationPrompt({
+        reason: result.reason,
+        canOpenSettings: result.canOpenSettings,
+        message: result.message,
+      });
+      return;
+    }
+
+    setLocation(result.coordinates);
+    setIsDapperLocationReady(true);
+    setLocationPrompt(null);
+    void goOnline();
+  }
+
+  function handleGoOffline() {
+    setIsMenuOpen(false);
+    resetDapperLocationState();
+  }
+
+  function cancelGoOnline() {
+    setIsMenuOpen(false);
+    resetDapperLocationState();
+  }
+
+  function dismissLocationPrompt() {
+    setIsMenuOpen(false);
+    setLocationPrompt(null);
+  }
+
+  async function handleOpenSettings() {
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    setIsMenuOpen(false);
+
+    try {
+      await Linking.openSettings();
+    } catch {
+      setLocationPrompt((current) =>
+        current
+          ? {
+              ...current,
+              canOpenSettings: false,
+              message:
+                'Unable to open device settings automatically. Open your device settings, allow location access for this app, and tap Try again.',
+            }
+          : current,
+      );
+    }
+  }
+
+  function handleSignOut() {
+    setIsMenuOpen(false);
+    requestLocationRequestIdRef.current += 1;
+    dapRequest.cancelRequest();
+    resetDapperLocationState();
+    onSignOut();
+  }
+
+  function handleDeleteAccount() {
+    setIsMenuOpen(false);
+    requestLocationRequestIdRef.current += 1;
+    dapRequest.cancelRequest();
+    resetDapperLocationState();
+    onDeleteAccount();
+  }
 
   useEffect(() => {
     setSelectedServices(offeredServices);
@@ -238,6 +410,8 @@ export default function MapScreen({
   }
 
   function closeRequestMenu() {
+    requestLocationRequestIdRef.current += 1;
+    setIsRequestingLocation(false);
     dapRequest.cancelRequest();
     Animated.timing(sheetProgress, {
       toValue: 0,
@@ -298,28 +472,77 @@ export default function MapScreen({
       return;
     }
 
-    onChangeMode(nextMode);
+    handleSelectMode(nextMode);
   }
 
-  function confirmRequest() {
+  async function confirmRequest() {
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
       toastTimeoutRef.current = null;
     }
 
     setShowMatchToast(false);
-    if (location) {
-      void dapRequest.startRequest(selectedDap, location);
-    }
-  }
+    setRequestLocationError(null);
+    const requestId = ++requestLocationRequestIdRef.current;
+    setIsRequestingLocation(true);
 
-  function toggleDapperAvailability() {
-    if (isOnline) {
-      goOffline();
-    } else if (offeredServices.length === 0) {
-      openPreferences();
-    } else {
-      void goOnline();
+    try {
+      const result =
+        Platform.OS === 'web'
+          ? await resolveWebDapperOnlineLocation()
+          : await resolveDapperOnlineLocation(
+              {
+                hasServicesEnabledAsync: () =>
+                  Location.hasServicesEnabledAsync(),
+                getForegroundPermissionsAsync: () =>
+                  Location.getForegroundPermissionsAsync(),
+                requestForegroundPermissionsAsync: () =>
+                  Location.requestForegroundPermissionsAsync(),
+                getCurrentPositionAsync: () =>
+                  Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                  }),
+              },
+              { isNative: true },
+            );
+
+      if (
+        !isMountedRef.current ||
+        activeModeRef.current !== 'order' ||
+        requestLocationRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
+
+      if (!result.ok) {
+        setRequestLocationError(
+          result.reason === 'permission-denied'
+            ? 'Allow location access to request an UberDap.'
+            : result.reason === 'services-disabled'
+              ? 'Enable location services to request an UberDap.'
+              : 'Unable to get your location. Try again.',
+        );
+        return;
+      }
+
+      setLocation(result.coordinates);
+      void dapRequest.startRequest(selectedDap, result.coordinates);
+    } catch {
+      if (
+        isMountedRef.current &&
+        requestLocationRequestIdRef.current === requestId
+      ) {
+        setRequestLocationError(
+          'Unable to get your location. Check location services and try again.',
+        );
+      }
+    } finally {
+      if (
+        isMountedRef.current &&
+        requestLocationRequestIdRef.current === requestId
+      ) {
+        setIsRequestingLocation(false);
+      }
     }
   }
 
@@ -334,51 +557,78 @@ export default function MapScreen({
     dapRequest.status === 'connecting' ||
     dapRequest.status === 'searching' ||
     dapRequest.status === 'matched';
-  const mapLocation =
-    activeMode === 'dapper'
-      ? activeDap?.location ?? offer?.location ?? location
-      : location;
-
   return (
     <View style={styles.container}>
       <View style={styles.mapLayer}>
-        {mapLocation ? (
-          <MapSurface
-            location={mapLocation}
-            mode={activeDap || offer ? 'order' : activeMode}
-          />
-        ) : (
-          <View style={styles.mapPlaceholder} />
-        )}
+        <MapSurface
+          location={mapLocation}
+          mode={activeDap || offer ? 'order' : activeMode}
+        />
       </View>
 
-      {isLocating ? (
-        <View style={styles.locationMessage}>
-          <ActivityIndicator color="#314b9a" />
-          <Text style={styles.messageText}>Finding your location...</Text>
-        </View>
-      ) : null}
-
-      {locationError ? (
-        <View style={styles.locationMessage}>
-          <Text style={styles.messageText}>{locationError}</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setAttempt((current) => current + 1)}
-            style={styles.retryButton}
-          >
-            <Text style={styles.retryButtonText}>Try again</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {activeMode === 'dapper' && connectionError ? (
-        <View style={styles.locationMessage}>
-          <Text style={styles.messageText}>{connectionError}</Text>
-        </View>
-      ) : null}
-
       <SafeAreaView pointerEvents="box-none" style={styles.overlay}>
+        {isDapperMode && (isGoingOnline || locationPrompt) ? (
+          <View style={styles.promptOverlay}>
+            <View style={styles.promptCard}>
+              {isGoingOnline ? (
+                <>
+                  <ActivityIndicator color="#314b9a" size="small" />
+                  <Text style={styles.promptTitle}>Checking location</Text>
+                  <Text style={styles.promptMessage}>
+                    Location must be enabled to go online as a Dapper.
+                  </Text>
+                  <View style={styles.promptActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={cancelGoOnline}
+                      style={styles.cancelButton}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : locationPrompt ? (
+                <>
+                  <Text style={styles.promptTitle}>
+                    Location required to go online
+                  </Text>
+                  <Text style={styles.promptMessage}>
+                    {locationPrompt.message}
+                  </Text>
+                  <View style={styles.promptActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void handleGoOnline()}
+                      style={styles.retryButton}
+                    >
+                      <Text style={styles.retryButtonText}>Try again</Text>
+                    </Pressable>
+                    {locationPrompt.canOpenSettings ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => void handleOpenSettings()}
+                        style={styles.secondaryButton}
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          Open settings
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={dismissLocationPrompt}
+                      style={styles.cancelButton}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+
         <View pointerEvents="box-none" style={styles.topBar}>
           <View style={styles.modeToggleCard}>
             {MODE_TABS.map((tab) => {
@@ -453,10 +703,7 @@ export default function MapScreen({
                 <Pressable
                   accessibilityRole="button"
                   disabled={isSubmitting}
-                  onPress={() => {
-                    dapRequest.cancelRequest();
-                    onSignOut();
-                  }}
+                  onPress={handleSignOut}
                   style={styles.menuItem}
                 >
                   <Text style={styles.signOutText}>Sign out</Text>
@@ -464,7 +711,7 @@ export default function MapScreen({
                 <Pressable
                   accessibilityRole="button"
                   disabled={isSubmitting}
-                  onPress={onDeleteAccount}
+                  onPress={handleDeleteAccount}
                   style={[styles.menuItem, styles.deleteButton]}
                 >
                   <Text style={styles.deleteText}>
@@ -477,55 +724,69 @@ export default function MapScreen({
         </View>
 
         <View style={styles.bottomActions}>
-          {activeMode === 'dapper' ? (
+          {isDapperMode ? (
             <Text style={styles.dapperStatus}>
               {activeDap
                 ? 'You are busy with an active UberDap.'
                 : offeredServices.length === 0
                   ? 'Select at least one service in Preferences to go online.'
-                : isOnline
-                ? 'Your location is being shared while you are online.'
-                : 'Your location stays private while you are offline.'}
+                  : isDapperOnline
+                    ? 'Your location is being shared while you are online.'
+                    : 'Your location stays private while you are offline.'}
             </Text>
+          ) : null}
+          {isDapperMode && connectionError ? (
+            <View style={styles.onlineBadge}>
+                    <Text style={styles.accountError}>{connectionError}</Text>
+            </View>
           ) : null}
           <Pressable
             accessibilityRole="button"
             disabled={
               isSubmitting ||
-              (activeMode === 'dapper' && isConnecting) ||
-              (activeMode === 'order' && dapRequest.isRestoring)
+              (isDapperMode && (isGoingOnline || isConnecting)) ||
+              (!isDapperMode &&
+                (dapRequest.isRestoring || isRequestingLocation))
             }
-            onPress={
-              activeMode === 'dapper'
-                ? toggleDapperAvailability
-                : () => {
-                    if (dapRequest.status === 'delivered') {
-                      dapRequest.resetRequest();
-                    }
-                    openRequestMenu();
-                  }
-            }
+            onPress={() => {
+              if (isDapperMode) {
+                if (isDapperOnline) {
+                  handleGoOffline();
+                } else {
+                  void handleGoOnline();
+                }
+                return;
+              }
+
+              if (dapRequest.status === 'delivered') {
+                dapRequest.resetRequest();
+              }
+              openRequestMenu();
+            }}
             style={[
               styles.requestButton,
-              activeMode === 'dapper' && styles.goOnlineButton,
-              activeMode === 'dapper' && isOnline && styles.goOfflineButton,
+              isDapperMode && styles.goOnlineButton,
+              isDapperMode && isDapperOnline && styles.goOfflineButton,
               (isSubmitting ||
-                (activeMode === 'dapper' && isConnecting) ||
-                (activeMode === 'order' && dapRequest.isRestoring)) &&
+                (isDapperMode && (isGoingOnline || isConnecting)) ||
+                (!isDapperMode &&
+                  (dapRequest.isRestoring || isRequestingLocation))) &&
                 styles.disabledButton,
             ]}
           >
-            {isConnecting ||
-            (activeMode === 'order' && dapRequest.isRestoring) ? (
+            {isDapperMode && (isGoingOnline || isConnecting) ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : !isDapperMode &&
+              (isRequestingLocation || dapRequest.isRestoring) ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
               <Text style={styles.requestButtonText}>
-                {activeMode === 'dapper'
+                {isDapperMode
                   ? offeredServices.length === 0
                     ? 'Choose Services'
-                    : isOnline
-                    ? 'Go Offline'
-                    : 'Go Online'
+                    : isDapperOnline
+                      ? 'Go Offline'
+                      : 'Go Online'
                   : dapRequest.status === 'matched'
                     ? 'View Your UberDap'
                     : dapRequest.status === 'searching' ||
@@ -577,8 +838,10 @@ export default function MapScreen({
             </View>
             {dapRequest.status === 'idle' || dapRequest.status === 'failed' ? (
               <>
-                {dapRequest.error ? (
-                  <Text style={styles.matchingError}>{dapRequest.error}</Text>
+                {requestLocationError || dapRequest.error ? (
+                  <Text style={styles.matchingError}>
+                    {requestLocationError ?? dapRequest.error}
+                  </Text>
                 ) : null}
                 <View style={styles.options}>
                   {dapOptions.map((option) => {
@@ -618,16 +881,21 @@ export default function MapScreen({
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  disabled={!location || isLocating}
-                  onPress={confirmRequest}
+                  disabled={isRequestingLocation || dapRequest.isRestoring}
+                  onPress={() => void confirmRequest()}
                   style={[
                     styles.confirmButton,
-                    (!location || isLocating) && styles.disabledButton,
+                    (isRequestingLocation || dapRequest.isRestoring) &&
+                      styles.disabledButton,
                   ]}
                 >
-                  <Text style={styles.confirmButtonText}>
-                    Confirm UberDap
-                  </Text>
+                  {isRequestingLocation ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.confirmButtonText}>
+                      Confirm UberDap
+                    </Text>
+                  )}
                 </Pressable>
               </>
             ) : dapRequest.status === 'connecting' ||
@@ -793,18 +1061,18 @@ export default function MapScreen({
                   Travel to {activeDap.location.latitude.toFixed(5)},{' '}
                   {activeDap.location.longitude.toFixed(5)}
                 </Text>
-                {!isOnline ? (
+                {!isDapperOnline ? (
                   <Text style={styles.dapperSheetHint}>
                     Go online again to mark this dap delivered.
                   </Text>
                 ) : null}
                 <Pressable
                   accessibilityRole="button"
-                  disabled={!isOnline || isResponding}
+                  disabled={!isDapperOnline || isResponding}
                   onPress={markDapDelivered}
                   style={[
                     styles.deliveredButton,
-                    (!isOnline || isResponding) && styles.disabledButton,
+                    (!isDapperOnline || isResponding) && styles.disabledButton,
                   ]}
                 >
                   <Text style={styles.deliveredButtonText}>
@@ -877,37 +1145,59 @@ const styles = StyleSheet.create({
   mapLayer: {
     ...StyleSheet.absoluteFill,
   },
-  mapPlaceholder: {
+  overlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#e8edf5',
+    zIndex: 1100,
+    elevation: 10,
   },
-  locationMessage: {
-    position: 'absolute',
-    top: '42%',
-    zIndex: 1200,
-    alignSelf: 'center',
-    maxWidth: '85%',
+  promptOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1101,
+    elevation: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 88,
+    paddingBottom: 24,
+    backgroundColor: 'rgba(23, 32, 51, 0.3)',
+  },
+  promptCard: {
+    width: '100%',
+    maxWidth: 340,
     alignItems: 'center',
     gap: 12,
-    borderRadius: 16,
-    padding: 18,
+    borderRadius: 18,
+    padding: 22,
     backgroundColor: '#ffffff',
     shadowColor: '#172033',
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 5,
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
   },
-  messageText: {
+  promptTitle: {
+    color: '#172033',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  promptMessage: {
     color: '#34425c',
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',
   },
+  promptActions: {
+    width: '100%',
+    gap: 10,
+    marginTop: 4,
+  },
   retryButton: {
-    borderRadius: 10,
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
     paddingHorizontal: 18,
-    paddingVertical: 10,
     backgroundColor: '#314b9a',
   },
   retryButtonText: {
@@ -915,10 +1205,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 1100,
-    elevation: 10,
+  secondaryButton: {
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#314b9a',
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    backgroundColor: '#ffffff',
+  },
+  secondaryButtonText: {
+    color: '#314b9a',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  cancelButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#dce1ea',
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    backgroundColor: '#ffffff',
+  },
+  cancelButtonText: {
+    color: '#34425c',
+    fontSize: 14,
+    fontWeight: '600',
   },
   topBar: {
     position: 'absolute',
@@ -1016,6 +1331,34 @@ const styles = StyleSheet.create({
     right: 16,
     bottom: 16,
     left: 16,
+    zIndex: 1100,
+    gap: 10,
+  },
+  onlineBadge: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    shadowColor: '#172033',
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  onlineDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#16a34a',
+  },
+  onlineBadgeText: {
+    color: '#172033',
+    fontSize: 13,
+    fontWeight: '700',
   },
   requestButton: {
     minHeight: 60,
@@ -1028,6 +1371,9 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 8,
+  },
+  offlineButton: {
+    backgroundColor: '#172033',
   },
   requestButtonText: {
     color: '#ffffff',

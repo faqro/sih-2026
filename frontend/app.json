@@ -22,7 +22,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location to show you on the map."
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location when going online as a Dapper."
         }
       ]
     ],
