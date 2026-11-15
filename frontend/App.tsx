@@ -1,9 +1,10 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -17,19 +18,24 @@ import {
 import {
   ApiError,
   authenticate,
+  cancelChessSso,
   completeOnboarding,
   deleteAccount,
+  exchangeChessSsoCode,
+  fetchChessSsoStatus,
   fetchCurrentUser,
+  startChessSso,
   updateActiveMode,
   type AppMode,
   type AuthMode,
   type AuthUser,
+  type ChessSsoStatusResponse,
 } from './src/api/auth';
 import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
   type OnboardingAction,
 } from './src/screens/OnboardingModeScreen';
-import WelcomeScreen from './src/screens/WelcomeScreen';
+import WelcomeScreen, { type SocialProvider } from './src/screens/WelcomeScreen';
 import {
   clearAuthToken,
   loadAuthToken,
@@ -42,37 +48,162 @@ type SignedInUser = AuthUser & {
 
 type UnauthenticatedView = 'welcome' | 'form';
 
+const PROVIDER_LABELS: Record<SocialProvider, string> = {
+  chess: 'Chess.com',
+  steam: 'Steam',
+  strava: 'Strava',
+  spotify: 'Spotify',
+  osu: 'OSU',
+};
+
+function parseChessCallbackUrl(rawUrl: string): {
+  code: string | null;
+  error: string | null;
+} {
+  try {
+    const parsed = new URL(rawUrl);
+    return {
+      code: parsed.searchParams.get('chess_code'),
+      error: parsed.searchParams.get('chess_error'),
+    };
+  } catch {
+    return { code: null, error: null };
+  }
+}
+
+function consumeWebChessCallbackParams(): {
+  code: string | null;
+  error: string | null;
+} {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return { code: null, error: null };
+  }
+
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('chess_code');
+  const error = url.searchParams.get('chess_error');
+
+  if (code !== null || error !== null) {
+    url.searchParams.delete('chess_code');
+    url.searchParams.delete('chess_error');
+    const cleanUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
+
+  return { code, error };
+}
+
 export default function App() {
+  const [initialChessCallback] = useState(consumeWebChessCallbackParams);
   const [authView, setAuthView] = useState<UnauthenticatedView>('welcome');
   const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<SignedInUser | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialChessCallback.error);
   const [isRestoringSession, setIsRestoringSession] = useState(() =>
-    Boolean(loadAuthToken()),
+    Boolean(initialChessCallback.code || loadAuthToken() || Platform.OS !== 'web'),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingProvider, setPendingProvider] =
+    useState<SocialProvider | null>(null);
   const [onboardingAction, setOnboardingAction] =
     useState<OnboardingAction | null>(null);
+  const chessPollActiveRef = useRef(false);
+  const activeChessSessionRef = useRef<{
+    state: string;
+    pollToken: string;
+  } | null>(null);
+  const isExchangingChessCodeRef = useRef(false);
+  const handledChessCodesRef = useRef<Set<string>>(new Set());
+  const chessAttemptIdRef = useRef(0);
+  const isMountedRef = useRef(true);
 
   const isLogin = mode === 'login';
 
-  useEffect(() => {
-    const storedToken = loadAuthToken();
-
-    if (!storedToken) {
-      setIsRestoringSession(false);
+  async function completeChessSignInWithCode(code: string): Promise<void> {
+    if (
+      !code ||
+      handledChessCodesRef.current.has(code) ||
+      isExchangingChessCodeRef.current
+    ) {
       return;
     }
 
+    handledChessCodesRef.current.add(code);
+    chessAttemptIdRef.current += 1;
+    isExchangingChessCodeRef.current = true;
+    chessPollActiveRef.current = false;
+    activeChessSessionRef.current = null;
+
+    try {
+      const result = await exchangeChessSsoCode(code);
+      saveAuthToken(result.token);
+      if (isMountedRef.current) {
+        setUser({ ...result.user, token: result.token });
+        setError(null);
+      }
+    } catch (exchangeError) {
+      if (isMountedRef.current) {
+        setError(
+          exchangeError instanceof Error
+            ? exchangeError.message
+            : 'Unable to complete Chess.com Sign-In.',
+        );
+      }
+    } finally {
+      isExchangingChessCodeRef.current = false;
+      if (isMountedRef.current) {
+        setPendingProvider(null);
+      }
+    }
+  }
+
+  useEffect(() => {
+    isMountedRef.current = true;
     let isActive = true;
 
-    async function restoreSession(token: string) {
-      try {
-        const result = await fetchCurrentUser(token);
+    async function initializeSession() {
+      let chessCode = initialChessCallback.code;
+      let chessCallbackError: string | null = null;
+
+      if (!chessCode && Platform.OS !== 'web') {
+        try {
+          const initialUrl = await Linking.getInitialURL();
+          if (initialUrl) {
+            const parsed = parseChessCallbackUrl(initialUrl);
+            chessCode = parsed.code;
+            chessCallbackError = parsed.error;
+          }
+        } catch {
+          // Ignore Linking.getInitialURL failures on unsupported environments.
+        }
+      }
+
+      if (chessCallbackError && isActive) {
+        setError(chessCallbackError);
+      }
+
+      if (chessCode) {
+        await completeChessSignInWithCode(chessCode);
         if (isActive) {
-          setUser({ ...result.user, token });
+          setIsRestoringSession(false);
+        }
+        return;
+      }
+
+      const storedToken = loadAuthToken();
+      if (!storedToken) {
+        if (isActive) {
+          setIsRestoringSession(false);
+        }
+        return;
+      }
+
+      try {
+        const result = await fetchCurrentUser(storedToken);
+        if (isActive) {
+          setUser({ ...result.user, token: storedToken });
         }
       } catch (restoreError) {
         clearAuthToken();
@@ -92,16 +223,48 @@ export default function App() {
       }
     }
 
-    void restoreSession(storedToken);
+    void initializeSession();
 
     return () => {
       isActive = false;
+      isMountedRef.current = false;
+      chessPollActiveRef.current = false;
+    };
+  }, [initialChessCallback.code]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      const { code, error: callbackError } = parseChessCallbackUrl(url);
+
+      if (code) {
+        void completeChessSignInWithCode(code);
+        return;
+      }
+
+      if (callbackError) {
+        chessAttemptIdRef.current += 1;
+        chessPollActiveRef.current = false;
+        activeChessSessionRef.current = null;
+        setPendingProvider(null);
+        setError(callbackError);
+      }
+    });
+
+    return () => {
+      subscription.remove();
     };
   }, []);
 
   function signOut(nextError: string | null = null) {
+    chessPollActiveRef.current = false;
+    activeChessSessionRef.current = null;
     clearAuthToken();
     setUser(null);
+    setPendingProvider(null);
     setOnboardingAction(null);
     setAuthView('welcome');
     setError(nextError);
@@ -145,6 +308,146 @@ export default function App() {
     setMode(nextMode);
     setError(null);
     setAuthView('form');
+  }
+
+  async function handleCancelChessSso() {
+    chessAttemptIdRef.current += 1;
+    chessPollActiveRef.current = false;
+    const activeSession = activeChessSessionRef.current;
+    activeChessSessionRef.current = null;
+    setPendingProvider(null);
+    setError(null);
+
+    if (activeSession) {
+      await cancelChessSso(activeSession.state, activeSession.pollToken).catch(
+        () => {},
+      );
+    }
+  }
+
+  async function handleProviderPress(provider: SocialProvider) {
+    if (provider !== 'chess') {
+      setError(
+        `${PROVIDER_LABELS[provider]} sign-in is coming soon. Please use Chess.com or Log in / Sign up.`,
+      );
+      return;
+    }
+
+    const attemptId = ++chessAttemptIdRef.current;
+    const isCurrentAttempt = () =>
+      isMountedRef.current && chessAttemptIdRef.current === attemptId;
+    let startedSession: { state: string; pollToken: string } | null = null;
+    setError(null);
+    setPendingProvider('chess');
+
+    try {
+      const returnTo =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? `${window.location.origin}${window.location.pathname}`
+          : 'uberdaps://auth/chess';
+
+      const { authorizeUrl, state, pollToken } = await startChessSso(returnTo);
+      if (!isCurrentAttempt()) {
+        void cancelChessSso(state, pollToken).catch(() => {});
+        return;
+      }
+
+      startedSession = { state, pollToken };
+      activeChessSessionRef.current = startedSession;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign(authorizeUrl);
+        return;
+      }
+
+      await Linking.openURL(authorizeUrl);
+      if (!isCurrentAttempt()) {
+        return;
+      }
+      chessPollActiveRef.current = true;
+
+      const deadline = Date.now() + 3 * 60 * 1000;
+      let consecutivePollErrors = 0;
+      while (
+        chessPollActiveRef.current &&
+        isCurrentAttempt() &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (!chessPollActiveRef.current || !isCurrentAttempt()) {
+          return;
+        }
+
+        let status: ChessSsoStatusResponse;
+        try {
+          status = await fetchChessSsoStatus(state, pollToken);
+          consecutivePollErrors = 0;
+        } catch (pollError) {
+          if (!chessPollActiveRef.current || !isCurrentAttempt()) {
+            return;
+          }
+          if (
+            pollError instanceof ApiError &&
+            pollError.status >= 400 &&
+            pollError.status < 500
+          ) {
+            throw pollError;
+          }
+          consecutivePollErrors += 1;
+          if (consecutivePollErrors >= 5) {
+            throw pollError;
+          }
+          continue;
+        }
+
+        if (!chessPollActiveRef.current || !isCurrentAttempt()) {
+          return;
+        }
+
+        if (status.status === 'completed') {
+          await completeChessSignInWithCode(status.code);
+          return;
+        }
+
+        if (
+          status.status === 'error' ||
+          status.status === 'expired' ||
+          status.status === 'cancelled'
+        ) {
+          activeChessSessionRef.current = null;
+          setError(status.message);
+          setPendingProvider(null);
+          chessPollActiveRef.current = false;
+          return;
+        }
+      }
+
+      if (chessPollActiveRef.current && isCurrentAttempt()) {
+        chessPollActiveRef.current = false;
+        activeChessSessionRef.current = null;
+        setError('Chess.com sign-in timed out. Please try again.');
+        setPendingProvider(null);
+        await cancelChessSso(state, pollToken).catch(() => {});
+      }
+    } catch (ssoError) {
+      if (!isCurrentAttempt()) {
+        return;
+      }
+      chessPollActiveRef.current = false;
+      activeChessSessionRef.current = null;
+      setPendingProvider(null);
+      setError(
+        ssoError instanceof Error
+          ? ssoError.message
+          : 'Unable to start Chess.com Sign-In.',
+      );
+      if (startedSession) {
+        void cancelChessSso(
+          startedSession.state,
+          startedSession.pollToken,
+        ).catch(() => {});
+      }
+    }
   }
 
   async function handleOnboardingChoice(
@@ -259,12 +562,16 @@ export default function App() {
           <StatusBar style="dark" />
           <MapScreen
             activeMode={user.activeMode}
+            authProvider={user.authProvider}
+            chessAvatar={user.chessAvatar}
+            chessUsername={user.chessUsername}
             error={error}
             isSubmitting={isSubmitting}
             onChangeMode={(nextMode) => void handleChangeMapMode(nextMode)}
             onDeleteAccount={() => void removeAccount()}
             onSignOut={() => signOut()}
             token={user.token}
+            username={user.username}
           />
         </View>
       </View>
@@ -277,8 +584,12 @@ export default function App() {
         <View style={[styles.app, styles.welcomeApp]}>
           <StatusBar style="dark" />
           <WelcomeScreen
+            error={error}
+            onCancelProvider={() => void handleCancelChessSso()}
             onPressLogin={() => openAuthForm('login')}
+            onPressProvider={(provider) => void handleProviderPress(provider)}
             onPressSignup={() => openAuthForm('signup')}
+            pendingProvider={pendingProvider}
           />
         </View>
       </View>

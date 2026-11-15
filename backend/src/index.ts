@@ -7,7 +7,21 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { WebSocket, WebSocketServer } from 'ws';
 
-import { User, type AppMode } from './models/User.js';
+import {
+  ChessOAuthConfigError,
+  ChessOAuthFlowError,
+  cancelChessOAuthSession,
+  completeChessSessionWithCode,
+  consumeExchangeCode,
+  createChessAuthorizationSession,
+  createExchangeCode,
+  exchangeChessAuthorizationCode,
+  getChessOAuthSession,
+  getChessOAuthSessionForPoll,
+  markChessSessionError,
+  type ChessUserProfile,
+} from './chessOAuth.js';
+import { User, type AppMode, type AuthProvider } from './models/User.js';
 
 const app = express();
 const server = createServer(app);
@@ -144,6 +158,14 @@ app.post('/auth/login', async (request, response) => {
       return;
     }
 
+    if (user.authProvider === 'chess' || !user.password) {
+      response.status(400).json({
+        message:
+          'This account uses Chess.com Sign-In. Please tap "Continue with Chess.com".',
+      });
+      return;
+    }
+
     if (credentials.password !== user.password) {
       response.status(401).json({
         message: `Wrong password. Did you mean to write '${user.password}'?`,
@@ -156,6 +178,253 @@ app.post('/auth/login', async (request, response) => {
     console.error('Unable to sign in:', error);
     response.status(500).json({ message: 'Unable to sign in.' });
   }
+});
+
+app.post('/auth/chess/start', async (request, response) => {
+  const body: unknown = request.body;
+  const rawReturnTo =
+    isRecord(body) && typeof body.returnTo === 'string' ? body.returnTo : null;
+  const requestedRedirectUri =
+    isRecord(body) && 'redirectUri' in body ? body.redirectUri : undefined;
+  const returnTo = resolveSafeReturnTo(rawReturnTo);
+
+  try {
+    const redirectUri = resolveChessRedirectUri(request, requestedRedirectUri);
+    const session = await createChessAuthorizationSession({
+      redirectUri,
+      returnTo,
+    });
+    response.status(200).json(session);
+  } catch (error) {
+    if (error instanceof ChessOAuthConfigError) {
+      response.status(503).json({ message: error.message });
+      return;
+    }
+
+    if (error instanceof ChessOAuthFlowError) {
+      response.status(error.status).json({ message: error.message });
+      return;
+    }
+
+    console.error('Unable to start Chess.com SSO:', error);
+    response.status(500).json({ message: 'Unable to start Chess.com Sign-In.' });
+  }
+});
+
+app.get('/auth/chess/callback', async (request, response) => {
+  const state =
+    typeof request.query.state === 'string' ? request.query.state : '';
+  const code = typeof request.query.code === 'string' ? request.query.code : '';
+  const oauthError =
+    typeof request.query.error === 'string' ? request.query.error : '';
+  const oauthErrorDescription =
+    typeof request.query.error_description === 'string'
+      ? request.query.error_description
+      : '';
+
+  const existingSession = state ? getChessOAuthSession(state) : null;
+  const fallbackReturnTo = resolveSafeReturnTo(existingSession?.returnTo ?? null);
+
+  if (oauthError) {
+    const message =
+      oauthError === 'access_denied'
+        ? 'Chess.com sign-in was cancelled.'
+        : oauthErrorDescription || `Chess.com sign-in failed (${oauthError}).`;
+
+    if (state) {
+      markChessSessionError(state, message);
+    }
+
+    sendChessCallbackError(response, fallbackReturnTo, message);
+    return;
+  }
+
+  if (!state || !code) {
+    const message = 'Missing authorization code or state from Chess.com.';
+    if (state) {
+      markChessSessionError(state, message);
+    }
+    sendChessCallbackError(response, fallbackReturnTo, message);
+    return;
+  }
+
+  try {
+    const { profile, session } = await exchangeChessAuthorizationCode({
+      state,
+      code,
+    });
+    if (session.status !== 'pending') {
+      throw new ChessOAuthFlowError('Chess.com sign-in was cancelled.', 400);
+    }
+
+    const user = await findOrCreateChessUser(profile);
+    const serialized = serializeUser(user);
+    const token = signUserToken(serialized);
+    const exchangeCode = createExchangeCode(token, serialized);
+
+    if (!completeChessSessionWithCode(state, exchangeCode)) {
+      consumeExchangeCode(exchangeCode);
+      throw new ChessOAuthFlowError('Chess.com sign-in was cancelled.', 400);
+    }
+
+    const targetReturnTo = resolveSafeReturnTo(session.returnTo);
+    if (targetReturnTo && isHttpUrl(targetReturnTo)) {
+      const redirectTarget = new URL(targetReturnTo);
+      redirectTarget.searchParams.set('chess_code', exchangeCode);
+      response.redirect(302, redirectTarget.toString());
+      return;
+    }
+
+    const deepLinkTarget = buildNativeChessDeepLink(targetReturnTo, {
+      chess_code: exchangeCode,
+    });
+
+    response
+      .status(200)
+      .type('html')
+      .send(
+        renderChessCallbackHtml(
+          'Signed in with Chess.com',
+          'Returning you to UberDaps. Tap the button below if the app does not open automatically.',
+          deepLinkTarget,
+        ),
+      );
+  } catch (error) {
+    const message =
+      error instanceof ChessOAuthConfigError ||
+      error instanceof ChessOAuthFlowError
+        ? error.message
+        : 'Unable to complete Chess.com Sign-In.';
+
+    console.error('Chess.com SSO callback error:', error);
+    markChessSessionError(state, message);
+    sendChessCallbackError(response, fallbackReturnTo, message);
+  }
+});
+
+app.post('/auth/chess/exchange', (request, response) => {
+  const body: unknown = request.body;
+
+  if (
+    !isRecord(body) ||
+    typeof body.code !== 'string' ||
+    body.code.trim().length === 0
+  ) {
+    response.status(400).json({ message: 'Chess.com exchange code is required.' });
+    return;
+  }
+
+  const payload = consumeExchangeCode<SerializedUser>(body.code.trim());
+
+  if (!payload) {
+    response.status(401).json({
+      message: 'Chess.com sign-in session expired. Please try again.',
+    });
+    return;
+  }
+
+  response.status(200).json(payload);
+});
+
+app.get('/auth/chess/status', (request, response) => {
+  const state =
+    typeof request.query.state === 'string' ? request.query.state.trim() : '';
+  const queryPollToken =
+    typeof request.query.pollToken === 'string'
+      ? request.query.pollToken.trim()
+      : '';
+  const headerPollToken =
+    request.get('x-chess-poll-token')?.trim() || '';
+  const pollToken = queryPollToken || headerPollToken;
+
+  if (!state || !pollToken) {
+    response.status(400).json({ message: 'Missing OAuth state or pollToken.' });
+    return;
+  }
+
+  const lookup = getChessOAuthSessionForPoll(state, pollToken);
+
+  if (lookup.kind === 'expired') {
+    response.status(200).json({
+      status: 'expired',
+      message: 'Chess.com sign-in session expired. Please try again.',
+    });
+    return;
+  }
+
+  if (lookup.kind === 'unauthorized') {
+    response.status(403).json({
+      message: 'Invalid Chess.com sign-in poll token.',
+    });
+    return;
+  }
+
+  const { session } = lookup;
+
+  if (session.status === 'completed' && session.exchangeCode) {
+    response.status(200).json({
+      status: 'completed',
+      code: session.exchangeCode,
+    });
+    return;
+  }
+
+  if (session.status === 'cancelled') {
+    response.status(200).json({
+      status: 'cancelled',
+      message: session.errorMessage || 'Chess.com sign-in was cancelled.',
+    });
+    return;
+  }
+
+  if (session.status === 'error') {
+    response.status(200).json({
+      status: 'error',
+      message: session.errorMessage || 'Chess.com sign-in failed.',
+    });
+    return;
+  }
+
+  response.status(200).json({ status: 'pending' });
+});
+
+app.post('/auth/chess/cancel', (request, response) => {
+  const body: unknown = request.body;
+
+  if (
+    !isRecord(body) ||
+    typeof body.state !== 'string' ||
+    body.state.trim().length === 0 ||
+    typeof body.pollToken !== 'string' ||
+    body.pollToken.trim().length === 0
+  ) {
+    response.status(400).json({
+      message: 'Chess.com OAuth state and pollToken are required.',
+    });
+    return;
+  }
+
+  const result = cancelChessOAuthSession(
+    body.state.trim(),
+    body.pollToken.trim(),
+  );
+
+  if (result.kind === 'expired') {
+    response.status(200).json({ status: 'expired', cancelled: false });
+    return;
+  }
+
+  if (result.kind === 'unauthorized') {
+    response.status(403).json({
+      message: 'Invalid Chess.com sign-in poll token.',
+    });
+    return;
+  }
+
+  response.status(200).json({
+    status: result.status,
+    cancelled: result.cancelled,
+  });
 });
 
 app.get('/auth/me', async (request, response) => {
@@ -419,6 +688,9 @@ function getTokenUserId(token: string): string | null {
 type SerializedUser = {
   id: string;
   username: string;
+  authProvider: AuthProvider;
+  chessUsername: string | null;
+  chessAvatar: string | null;
   activeMode: AppMode;
   hasCompletedOnboarding: boolean;
 };
@@ -451,12 +723,18 @@ function authenticateRequest(
 function serializeUser(user: {
   id: string;
   username: string;
+  authProvider?: AuthProvider;
+  chessUsername?: string | null;
+  chessAvatar?: string | null;
   activeMode?: AppMode;
   hasCompletedOnboarding?: boolean;
 }): SerializedUser {
   return {
     id: user.id,
     username: user.username,
+    authProvider: user.authProvider === 'chess' ? 'chess' : 'local',
+    chessUsername: user.chessUsername ?? null,
+    chessAvatar: user.chessAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
     hasCompletedOnboarding: Boolean(user.hasCompletedOnboarding),
   };
@@ -528,14 +806,337 @@ function readCredentials(
   return { username, password };
 }
 
-function sendAuthResponse(response: Response, user: SerializedUser) {
-  const token = jwt.sign(
+function signUserToken(user: SerializedUser): string {
+  return jwt.sign(
     { sub: user.id, username: user.username },
     jwtSecret,
     { expiresIn: 60 * 60 * 24 * 7 },
   );
+}
 
+function sendAuthResponse(response: Response, user: SerializedUser) {
+  const token = signUserToken(user);
   response.status(200).json({ token, user });
+}
+
+function isValidHttpUrl(rawUrl: string): URL | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.hostname.length > 0
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isHttpUrl(rawUrl: string): boolean {
+  return isValidHttpUrl(rawUrl) !== null;
+}
+
+function resolveChessRedirectUri(
+  request: Request,
+  requestedRedirectUri?: unknown,
+): string {
+  const configured = process.env.CHESS_OAUTH_REDIRECT_URI?.trim();
+  let canonicalUrl: URL | null = null;
+
+  if (configured) {
+    canonicalUrl = isValidHttpUrl(configured);
+    if (!canonicalUrl) {
+      throw new ChessOAuthConfigError(
+        'CHESS_OAUTH_REDIRECT_URI must be a valid http(s) URL.',
+      );
+    }
+  } else {
+    const publicBackendUrl = process.env.PUBLIC_BACKEND_URL?.trim();
+    if (publicBackendUrl) {
+      const parsedPublic = isValidHttpUrl(publicBackendUrl);
+      if (!parsedPublic) {
+        throw new ChessOAuthConfigError(
+          'PUBLIC_BACKEND_URL must be a valid http(s) URL.',
+        );
+      }
+      canonicalUrl = new URL(
+        `${parsedPublic.toString().replace(/\/+$/, '')}/auth/chess/callback`,
+      );
+    } else {
+      const forwardedProto = request
+        .get('x-forwarded-proto')
+        ?.split(',')[0]
+        ?.trim();
+      const protocol = forwardedProto || request.protocol || 'http';
+      const host =
+        request.get('x-forwarded-host')?.split(',')[0]?.trim() ||
+        request.get('host') ||
+        `localhost:${port}`;
+
+      canonicalUrl = isValidHttpUrl(`${protocol}://${host}/auth/chess/callback`);
+      if (!canonicalUrl) {
+        throw new ChessOAuthFlowError(
+          'Unable to resolve a valid Chess.com OAuth callback URL.',
+          400,
+        );
+      }
+    }
+  }
+
+  if (requestedRedirectUri !== undefined && requestedRedirectUri !== null) {
+    if (typeof requestedRedirectUri !== 'string') {
+      throw new ChessOAuthFlowError(
+        'Chess.com OAuth redirectUri must be a valid URL string.',
+        400,
+      );
+    }
+
+    const trimmed = requestedRedirectUri.trim();
+    if (trimmed.length > 0) {
+      const parsedRequested = isValidHttpUrl(trimmed);
+      if (!parsedRequested) {
+        throw new ChessOAuthFlowError(
+          'Chess.com OAuth redirectUri must be a valid http(s) URL.',
+          400,
+        );
+      }
+
+      if (
+        parsedRequested.origin !== canonicalUrl.origin ||
+        parsedRequested.pathname !== canonicalUrl.pathname ||
+        parsedRequested.search !== canonicalUrl.search ||
+        parsedRequested.hash !== canonicalUrl.hash
+      ) {
+        throw new ChessOAuthFlowError(
+          'Chess.com OAuth redirectUri does not match the configured callback URL.',
+          400,
+        );
+      }
+
+      return parsedRequested.toString();
+    }
+  }
+
+  return canonicalUrl.toString();
+}
+
+function resolveSafeReturnTo(rawReturnTo: string | null): string | null {
+  if (!rawReturnTo) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(rawReturnTo);
+    const configuredFrontend = process.env.FRONTEND_ORIGIN?.trim();
+
+    if (configuredFrontend) {
+      try {
+        const allowedOrigin = new URL(configuredFrontend).origin;
+        if (parsed.origin === allowedOrigin) {
+          return parsed.toString();
+        }
+      } catch {
+        // Ignore malformed FRONTEND_ORIGIN when checking origin match.
+      }
+    }
+
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+    ) {
+      return parsed.toString();
+    }
+
+    if (parsed.protocol === 'uberdaps:' || parsed.protocol === 'exp:') {
+      return parsed.toString();
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function buildNativeChessDeepLink(
+  returnTo: string | null,
+  params: Record<string, string>,
+): string {
+  const baseUrl =
+    returnTo && !isHttpUrl(returnTo) ? returnTo : 'uberdaps://auth/chess';
+  const target = new URL(baseUrl);
+  for (const [key, value] of Object.entries(params)) {
+    target.searchParams.set(key, value);
+  }
+  return target.toString();
+}
+
+function sendChessCallbackError(
+  response: Response,
+  returnTo: string | null,
+  message: string,
+): void {
+  if (returnTo && isHttpUrl(returnTo)) {
+    const target = new URL(returnTo);
+    target.searchParams.set('chess_error', message);
+    response.redirect(302, target.toString());
+    return;
+  }
+
+  const deepLinkTarget = buildNativeChessDeepLink(returnTo, {
+    chess_error: message,
+  });
+
+  response
+    .status(400)
+    .type('html')
+    .send(
+      renderChessCallbackHtml(
+        'Chess.com Sign-In Failed',
+        message,
+        deepLinkTarget,
+      ),
+    );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderChessCallbackHtml(
+  title: string,
+  message: string,
+  deepLinkUrl: string,
+): string {
+  const safeDeepLinkJson = JSON.stringify(deepLinkUrl)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f9fafc; color: #172033; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; }
+      .card { max-width: 400px; background: #ffffff; border-radius: 16px; padding: 28px; box-shadow: 0 10px 30px rgba(23, 32, 51, 0.12); text-align: center; }
+      h1 { font-size: 20px; margin: 0 0 10px; }
+      p { font-size: 15px; line-height: 1.5; color: #4a5568; margin: 0 0 20px; }
+      .button { display: inline-block; padding: 12px 20px; border-radius: 10px; background: #172033; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+      <a class="button" href="${escapeHtml(deepLinkUrl)}">Return to UberDaps</a>
+    </div>
+    <script>
+      setTimeout(function () {
+        window.location.href = ${safeDeepLinkJson};
+      }, 150);
+    </script>
+  </body>
+</html>`;
+}
+
+function sanitizeBaseUsername(raw: string): string {
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 30);
+
+  if (cleaned.length >= 2) {
+    return cleaned;
+  }
+
+  return 'chess_player';
+}
+
+async function findOrCreateChessUser(profile: ChessUserProfile) {
+  let user = await User.findOne({ chessId: profile.chessId });
+
+  if (!user) {
+    user = await User.findOne({
+      authProvider: 'chess',
+      chessUsername: profile.chessUsername,
+      $or: [{ chessId: null }, { chessId: { $exists: false } }],
+    });
+  }
+
+  if (user) {
+    let dirty = false;
+    if (!user.chessId) {
+      user.chessId = profile.chessId;
+      dirty = true;
+    }
+    if (user.chessUsername !== profile.chessUsername) {
+      user.chessUsername = profile.chessUsername;
+      dirty = true;
+    }
+    if (profile.chessAvatar && user.chessAvatar !== profile.chessAvatar) {
+      user.chessAvatar = profile.chessAvatar;
+      dirty = true;
+    }
+    if (dirty) {
+      await user.save();
+    }
+    return user;
+  }
+
+  const baseUsername = sanitizeBaseUsername(profile.chessUsername);
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const suffix =
+      attempt === 0 ? '' : attempt === 1 ? '_chess' : `_chess_${attempt}`;
+    const maxBaseLength = 40 - suffix.length;
+    const candidate = `${baseUsername.slice(0, maxBaseLength)}${suffix}`;
+
+    try {
+      return await User.create({
+        username: candidate,
+        authProvider: 'chess',
+        chessId: profile.chessId,
+        chessUsername: profile.chessUsername,
+        chessAvatar: profile.chessAvatar,
+        activeMode: 'order',
+        hasCompletedOnboarding: false,
+      });
+    } catch (error) {
+      if (isDuplicateUsernameError(error)) {
+        const existingByChessId = await User.findOne({
+          chessId: profile.chessId,
+        });
+        if (existingByChessId) {
+          return existingByChessId;
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  const randomSuffix = `_${Date.now().toString(36)}`;
+  const fallbackUsername = `${baseUsername.slice(0, 40 - randomSuffix.length)}${randomSuffix}`;
+
+  return User.create({
+    username: fallbackUsername,
+    authProvider: 'chess',
+    chessId: profile.chessId,
+    chessUsername: profile.chessUsername,
+    chessAvatar: profile.chessAvatar,
+    activeMode: 'order',
+    hasCompletedOnboarding: false,
+  });
 }
 
 function isDuplicateUsernameError(error: unknown): boolean {

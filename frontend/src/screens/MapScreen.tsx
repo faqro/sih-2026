@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Image,
   Linking,
   Platform,
   Pressable,
@@ -13,7 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import type { AppMode } from '../api/auth';
+import type { AppMode, AuthProvider } from '../api/auth';
 import {
   resolveDapperOnlineLocation,
   resolveWebDapperOnlineLocation,
@@ -28,12 +29,16 @@ type DapOption = (typeof dapOptions)[number];
 
 type MapScreenProps = {
   activeMode: AppMode;
+  authProvider?: AuthProvider;
+  chessAvatar?: string | null;
+  chessUsername?: string | null;
   error: string | null;
   isSubmitting: boolean;
   onChangeMode: (nextMode: AppMode) => void;
   onDeleteAccount: () => void;
   onSignOut: () => void;
   token: string;
+  username?: string;
 };
 
 type LocationPromptState = {
@@ -49,13 +54,18 @@ const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
 
 export default function MapScreen({
   activeMode,
+  authProvider = 'local',
+  chessAvatar = null,
+  chessUsername = null,
   error,
   isSubmitting,
   onChangeMode,
   onDeleteAccount,
   onSignOut,
   token,
+  username,
 }: MapScreenProps) {
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [location, setLocation] = useState<Coordinates | null>(null);
   const [isDapperOnline, setIsDapperOnline] = useState(false);
   const [isGoingOnline, setIsGoingOnline] = useState(false);
@@ -95,6 +105,10 @@ export default function MapScreen({
     setLocationPrompt(null);
     goOffline();
   }
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [chessAvatar]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -505,6 +519,28 @@ export default function MapScreen({
             </Pressable>
             {isMenuOpen ? (
               <View style={styles.menu}>
+                {username || chessUsername ? (
+                  <View style={styles.menuAccountHeader}>
+                    {chessAvatar && !avatarLoadFailed ? (
+                      <Image
+                        accessibilityLabel={`${chessUsername ?? username ?? 'Chess.com'} avatar`}
+                        onError={() => setAvatarLoadFailed(true)}
+                        source={{ uri: chessAvatar }}
+                        style={styles.menuAvatar}
+                      />
+                    ) : null}
+                    <View style={styles.menuAccountText}>
+                      <Text numberOfLines={1} style={styles.menuUsername}>
+                        @{username ?? chessUsername}
+                      </Text>
+                      {authProvider === 'chess' ? (
+                        <Text numberOfLines={1} style={styles.menuProviderBadge}>
+                          Chess.com{chessUsername && chessUsername !== username ? ` (@${chessUsername})` : ''}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                ) : null}
                 {error ? <Text style={styles.accountError}>{error}</Text> : null}
                 <Pressable
                   accessibilityRole="button"
@@ -803,7 +839,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 60,
     right: 0,
-    width: 200,
+    width: 228,
     borderRadius: 14,
     paddingVertical: 6,
     backgroundColor: '#ffffff',
@@ -817,6 +853,35 @@ const styles = StyleSheet.create({
     minHeight: 48,
     justifyContent: 'center',
     paddingHorizontal: 16,
+  },
+  menuAccountHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#edf1f8',
+  },
+  menuAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#edf1f8',
+  },
+  menuAccountText: {
+    flex: 1,
+  },
+  menuUsername: {
+    color: '#172033',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  menuProviderBadge: {
+    color: '#5b7a38',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
   },
   bottomActions: {
     position: 'absolute',
