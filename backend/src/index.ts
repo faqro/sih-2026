@@ -903,6 +903,15 @@ async function handleRealtimeMessage(
     }
 
     const previousSocket = activeUserSockets.get(user.id);
+    if (previousSocket && previousSocket !== socket) {
+      const activeRequestId = activeRequestIdsByUser.get(user.id);
+      const activeRequest = activeRequestId
+        ? dapRequests.get(activeRequestId)
+        : undefined;
+      if (activeRequest?.status === 'pending') {
+        cancelDapRequest(activeRequest, 'User disconnected.', false);
+      }
+    }
     activeUserSockets.set(user.id, socket);
     previousSocket?.close(4001, 'Replaced by a newer connection.');
     sendWebSocketMessage(socket, {
@@ -1565,7 +1574,9 @@ function handleOrderSocketDisconnect(userId: string, socket: WebSocket): void {
   activeUserSockets.delete(userId);
   const requestId = activeRequestIdsByUser.get(userId);
   const request = requestId ? dapRequests.get(requestId) : undefined;
-  if (request) {
+  if (request?.status === 'pending') {
+    cancelDapRequest(request, 'User disconnected.', false);
+  } else if (request) {
     request.userSocket = null;
   }
 }

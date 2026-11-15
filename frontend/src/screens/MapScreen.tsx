@@ -80,6 +80,10 @@ export default function MapScreen({
 }: MapScreenProps) {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [location, setLocation] = useState<Coordinates | null>(null);
+  const [locationTrackingRevision, setLocationTrackingRevision] = useState(0);
+  const [locationTrackingError, setLocationTrackingError] = useState<
+    string | null
+  >(null);
   const [isDapperLocationReady, setIsDapperLocationReady] = useState(false);
   const [isGoingOnline, setIsGoingOnline] = useState(false);
   const [isRequestingLocation, setIsRequestingLocation] = useState(false);
@@ -151,15 +155,94 @@ export default function MapScreen({
   const isDapperOnline = isDapperLocationReady && isLocationStreamOnline;
   const hasDapperContent =
     isDapperMode && (offer !== null || activeDap !== null);
+  const isOrderRequestStreamingLocation =
+    dapRequest.status === 'connecting' || dapRequest.status === 'searching';
   const ownMapLocation = isDapperMode
     ? dapperLocation ?? location
-    : dapRequest.userLocation ?? location;
+    : isOrderRequestStreamingLocation
+      ? dapRequest.userLocation ?? location
+      : location ?? dapRequest.userLocation;
   const counterpartMapLocation = isDapperMode
     ? activeDap?.location ?? offer?.location ?? null
     : dapRequest.status === 'matched'
       ? dapRequest.matchedDapperLocation
       : null;
   dapperContentRef.current = hasDapperContent;
+
+  useEffect(() => {
+    if (
+      isDapperOnline ||
+      (activeMode === 'order' &&
+        (dapRequest.status === 'connecting' ||
+          dapRequest.status === 'searching'))
+    ) {
+      return;
+    }
+
+    let isActive = true;
+    let subscription: Location.LocationSubscription | null = null;
+
+    async function startMapLocationTracking() {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!isActive || permission.status !== 'granted') {
+          return;
+        }
+
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (!isActive) {
+          return;
+        }
+
+        setLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setLocationTrackingError(null);
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            distanceInterval: 5,
+            timeInterval: 3000,
+          },
+          (nextPosition) => {
+            if (!isActive) {
+              return;
+            }
+            setLocation({
+              latitude: nextPosition.coords.latitude,
+              longitude: nextPosition.coords.longitude,
+            });
+          },
+        );
+
+        if (!isActive) {
+          subscription.remove();
+          subscription = null;
+        }
+      } catch {
+        if (isActive) {
+          setLocationTrackingError(
+            'Unable to refresh your map location. Check location access and try again.',
+          );
+        }
+      }
+    }
+
+    void startMapLocationTracking();
+
+    return () => {
+      isActive = false;
+      subscription?.remove();
+    };
+  }, [
+    activeMode,
+    dapRequest.status,
+    isDapperOnline,
+    locationTrackingRevision,
+  ]);
 
   function resetDapperLocationState() {
     goOnlineRequestIdRef.current += 1;
@@ -303,6 +386,7 @@ export default function MapScreen({
     setLocation(result.coordinates);
     setIsDapperLocationReady(true);
     setLocationPrompt(null);
+    setLocationTrackingRevision((revision) => revision + 1);
     void goOnline();
   }
 
@@ -567,6 +651,7 @@ export default function MapScreen({
       }
 
       setLocation(result.coordinates);
+      setLocationTrackingRevision((revision) => revision + 1);
       void dapRequest.startRequest(selectedDap, result.coordinates);
     } catch {
       if (
@@ -737,6 +822,11 @@ export default function MapScreen({
 
         {error && !isMenuOpen && !isPreferencesOpen ? (
           <Text style={styles.modeError}>{error}</Text>
+        ) : null}
+        {locationTrackingError ? (
+          <Text style={styles.locationTrackingError}>
+            {locationTrackingError}
+          </Text>
         ) : null}
 
         <View style={styles.bottomActions}>
@@ -1559,6 +1649,21 @@ const styles = StyleSheet.create({
     right: 16,
     left: 16,
     zIndex: 1102,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#b42318',
+    backgroundColor: '#ffffff',
+    fontSize: 13,
+    textAlign: 'center',
+    elevation: 4,
+  },
+  locationTrackingError: {
+    position: 'absolute',
+    top: 126,
+    right: 16,
+    left: 16,
+    zIndex: 1101,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,

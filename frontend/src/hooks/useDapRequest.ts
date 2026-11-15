@@ -547,7 +547,8 @@ export function useDapRequest(
     return () => {
       isMountedRef.current = false;
       stopLocationUpdates();
-      closeSocket(false);
+      const status = stateRef.current.status;
+      closeSocket(status === 'connecting' || status === 'searching');
     };
   }, [closeSocket, stopLocationUpdates]);
 

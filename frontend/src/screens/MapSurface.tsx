@@ -5,7 +5,7 @@ import MapView, {
   type MapStyleElement,
   type Region,
 } from 'react-native-maps';
-import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, useWindowDimensions } from 'react-native';
 
 import type { AppMode } from '../api/auth';
 import {
@@ -33,6 +33,47 @@ function toVisibleRegion(location: Coordinates, sheetOpen: boolean): Region {
   return sheetOpen
     ? { ...region, latitude: region.latitude - region.latitudeDelta * 0.45 }
     : region;
+}
+
+function toPairRegion(
+  first: Coordinates,
+  second: Coordinates,
+  viewportWidth: number,
+  viewportHeight: number,
+  sheetOpen: boolean,
+): Region {
+  const longitudeDifference =
+    ((second.longitude - first.longitude + 540) % 360) - 180;
+  const latitudeDifference = second.latitude - first.latitude;
+  const latitudeSpan = Math.max(Math.abs(latitudeDifference), 0.008);
+  const longitudeSpan = Math.max(Math.abs(longitudeDifference), 0.008);
+  const visibleHeight = sheetOpen ? viewportHeight / 2 : viewportHeight;
+  const aspectRatio = viewportWidth / Math.max(visibleHeight, 1);
+  const spanMultiplier = sheetOpen ? 2.3 : 1.4;
+  const latitudeDelta = Math.min(
+    170,
+    Math.max(
+      latitudeSpan * spanMultiplier,
+      (longitudeSpan / aspectRatio) * 1.4,
+    ),
+  );
+  const longitudeDelta = Math.min(
+    360,
+    Math.max(
+      longitudeSpan * 1.4,
+      latitudeSpan * aspectRatio * spanMultiplier,
+    ),
+  );
+  const midpointLatitude = (first.latitude + second.latitude) / 2;
+  const midpointLongitude = first.longitude + longitudeDifference / 2;
+
+  return {
+    latitude:
+      midpointLatitude - (sheetOpen ? latitudeDelta * 0.25 : 0),
+    longitude: ((midpointLongitude + 540) % 360) - 180,
+    latitudeDelta,
+    longitudeDelta,
+  };
 }
 
 const minimalMapStyle: MapStyleElement[] = [
@@ -72,7 +113,8 @@ function MapSurface({
   isSheetOpen,
   mode,
 }: MapSurfaceProps) {
-  const { height: viewportHeight } = useWindowDimensions();
+  const { height: viewportHeight, width: viewportWidth } =
+    useWindowDimensions();
   const mapRef = useRef<MapView>(null);
   const isMapReadyRef = useRef(false);
   const initialHadLocationRef = useRef(
@@ -132,26 +174,16 @@ function MapSurface({
     sheetOpen: boolean,
     animated: boolean,
   ) {
-    if (
-      Math.abs(first.latitude - second.latitude) < 0.001 &&
-      Math.abs(first.longitude - second.longitude) < 0.001
-    ) {
-      mapRef.current?.animateToRegion(
-        toVisibleRegion(first, sheetOpen),
-        animated ? 350 : 0,
-      );
-      return;
-    }
-
-    mapRef.current?.fitToCoordinates([first, second], {
-      edgePadding: {
-        top: 90,
-        right: 48,
-        bottom: sheetOpen ? viewportHeight / 2 + 32 : 150,
-        left: 48,
-      },
-      animated,
-    });
+    mapRef.current?.animateToRegion(
+      toPairRegion(
+        first,
+        second,
+        viewportWidth,
+        viewportHeight,
+        sheetOpen,
+      ),
+      animated ? 350 : 0,
+    );
   }
 
   return (
@@ -193,49 +225,19 @@ function MapSurface({
       {ownLocation ? (
         <Marker
           coordinate={ownLocation}
-          anchor={{ x: 0.5, y: 0.5 }}
+          pinColor="#000000"
           title="Your location"
-        >
-          <View style={styles.marker}>
-            <View style={[styles.markerDot, styles.orderMarkerDot]} />
-          </View>
-        </Marker>
+        />
       ) : null}
       {counterpartLocation ? (
         <Marker
           coordinate={counterpartLocation}
-          anchor={{ x: 0.5, y: 0.5 }}
+          pinColor="#314b9a"
           title={mode === 'dapper' ? 'UberDap user' : 'Matched dapper'}
-        >
-          <View style={styles.marker}>
-            <View style={[styles.markerDot, styles.counterpartMarkerDot]} />
-          </View>
-        </Marker>
+        />
       ) : null}
     </MapView>
   );
 }
-
-const styles = StyleSheet.create({
-  marker: {
-    width: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 13,
-    backgroundColor: '#ffffff',
-  },
-  markerDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-  },
-  orderMarkerDot: {
-    backgroundColor: '#000000',
-  },
-  counterpartMarkerDot: {
-    backgroundColor: '#314b9a',
-  },
-});
 
 export default memo(MapSurface);

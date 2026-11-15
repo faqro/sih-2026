@@ -57,7 +57,8 @@ function MapViewportController({
             [counterpartLocation.latitude, counterpartLocation.longitude],
           ],
           {
-            padding: [
+            paddingTopLeft: [64, 64],
+            paddingBottomRight: [
               64,
               isSheetOpen ? Math.floor(map.getSize().y / 2) + 32 : 64,
             ],
