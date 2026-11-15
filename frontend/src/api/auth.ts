@@ -6,7 +6,8 @@ export type DapService =
   | 'Dap (Standard)'
   | 'Dap (Wheelchair-Accessible)'
   | 'Dap & Dash'
-  | 'THE GOD DAP';
+  | 'THE GOD DAP'
+  | 'Professional Handshake (Black-tie)';
 
 export type AuthUser = {
   id: string;

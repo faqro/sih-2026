@@ -38,6 +38,7 @@ const DAPPER_SERVICES: readonly DapService[] = [
   'Dap (Wheelchair-Accessible)',
   'Dap & Dash',
   'THE GOD DAP',
+  'Professional Handshake (Black-tie)',
 ];
 
 type OnboardingModeScreenProps = {

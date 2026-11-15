@@ -47,6 +47,7 @@ const dapOptions = [
   'Dap (Wheelchair-Accessible)',
   'Dap & Dash',
   'THE GOD DAP',
+  'Professional Handshake (Black-tie)',
 ] as const;
 type DapOption = (typeof dapOptions)[number];
 const dapOptionPrices: Record<DapOption, string> = {
@@ -55,6 +56,7 @@ const dapOptionPrices: Record<DapOption, string> = {
   'Dap (Wheelchair-Accessible)': '$24.99',
   'Dap & Dash': '$16.99',
   'THE GOD DAP': '$124.99',
+  'Professional Handshake (Black-tie)': '$529.99',
 };
 
 const DAP_DETAILS: Record<
@@ -85,6 +87,11 @@ const DAP_DETAILS: Record<
     tag: 'PREMIUM',
     time: '5 min',
     description: 'The ultimate dap experience.',
+  },
+  'Professional Handshake (Black-tie)': {
+    tag: 'FORMAL',
+    time: '5 min',
+    description: 'A polished handshake for formal occasions.',
   },
 };
 

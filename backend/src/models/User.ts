@@ -8,6 +8,7 @@ export const DAP_SERVICES = [
   'Dap (Wheelchair-Accessible)',
   'Dap & Dash',
   'THE GOD DAP',
+  'Professional Handshake (Black-tie)',
 ] as const;
 export type DapService = (typeof DAP_SERVICES)[number];
 
