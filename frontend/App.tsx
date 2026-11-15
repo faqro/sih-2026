@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -133,7 +134,12 @@ export default function App() {
         >
           <View style={styles.content}>
             <View style={styles.brandMark}>
-              <Text style={styles.brandMarkText}>S</Text>
+              <Image
+                accessibilityLabel="Uber DAPS logo"
+                resizeMode="cover"
+                source={require('./assets/uberdaps-logo.jpg')}
+                style={styles.brandMarkImage}
+              />
             </View>
             <Text style={styles.title}>
               {isLogin ? 'Welcome back' : 'Create your account'}
@@ -240,16 +246,14 @@ const styles = StyleSheet.create({
   brandMark: {
     width: 52,
     height: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
+    overflow: 'hidden',
     borderRadius: 17,
     marginBottom: 26,
-    backgroundColor: '#314b9a',
+    backgroundColor: '#000000',
   },
-  brandMarkText: {
-    color: '#ffffff',
-    fontSize: 24,
-    fontWeight: '800',
+  brandMarkImage: {
+    width: '100%',
+    height: '100%',
   },
   title: {
     color: '#172033',
