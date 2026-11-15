@@ -324,8 +324,8 @@ export default function DapDecibelMeasurer({
         <View style={styles.ratingGroup}>
           <Text style={styles.ratingStars}>
             {dapperRatingCount === 0
-              ? '★ New Dapper'
-              : `★ ${(dapperRating ?? 5.0).toFixed(1)}`}
+              ? 'New Dapper'
+              : `${(dapperRating ?? 5.0).toFixed(1)} / 5`}
           </Text>
           {dapperRatingCount && dapperRatingCount > 0 ? (
             <Text style={styles.ratingCount}>
@@ -444,7 +444,7 @@ export default function DapDecibelMeasurer({
                   pressed && styles.dapButtonPressed,
                 ]}
               >
-                <Text style={styles.dapButtonText}>👏 Dap Up!</Text>
+                <Text style={styles.dapButtonText}>Dap Up!</Text>
               </Pressable>
 
               {micPermission !== 'listening' ? (
