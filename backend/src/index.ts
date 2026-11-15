@@ -75,6 +75,45 @@ app.post('/auth/login', async (request, response) => {
   }
 });
 
+app.delete('/auth/account', async (request, response) => {
+  const authorization = request.headers.authorization;
+
+  if (!authorization?.startsWith('Bearer ')) {
+    response.status(401).json({ message: 'Authentication is required.' });
+    return;
+  }
+
+  let userId: string;
+
+  try {
+    const payload = jwt.verify(authorization.slice(7), jwtSecret);
+
+    if (typeof payload !== 'object' || typeof payload.sub !== 'string') {
+      response.status(401).json({ message: 'Invalid authentication token.' });
+      return;
+    }
+
+    userId = payload.sub;
+  } catch {
+    response.status(401).json({ message: 'Invalid authentication token.' });
+    return;
+  }
+
+  try {
+    const user = await User.findByIdAndDelete(userId);
+
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
+      return;
+    }
+
+    response.status(204).end();
+  } catch (error) {
+    console.error('Unable to delete user account:', error);
+    response.status(500).json({ message: 'Unable to delete account.' });
+  }
+});
+
 type Credentials = {
   username: string;
   password: string;

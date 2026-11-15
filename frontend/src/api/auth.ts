@@ -38,3 +38,22 @@ export async function authenticate(
 
   return body as AuthResponse;
 }
+
+export async function deleteAccount(token: string): Promise<void> {
+  const response = await fetch(`${apiUrl}/auth/account`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const message =
+      typeof body === 'object' &&
+      body !== null &&
+      'message' in body &&
+      typeof body.message === 'string'
+        ? body.message
+        : 'Unable to delete your account.';
+    throw new Error(message);
+  }
+}

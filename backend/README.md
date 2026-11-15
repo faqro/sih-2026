@@ -31,7 +31,9 @@ PORT=3000
 
 The available endpoints are `POST /auth/signup` and `POST /auth/login`. Both
 accept JSON with `username` and `password`, and return a user object and
-seven-day JSON Web Token on success.
+seven-day JSON Web Token on success. `DELETE /auth/account` deletes the account
+belonging to a valid bearer token; it requires the `Authorization: Bearer <token>`
+header and returns `204` on success.
 
 ## Fly.io deployment
 

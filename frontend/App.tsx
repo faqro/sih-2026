@@ -12,9 +12,10 @@ import {
   View,
 } from 'react-native';
 
-import { authenticate, type AuthMode } from './src/api/auth';
+import { authenticate, deleteAccount, type AuthMode } from './src/api/auth';
 
 type SignedInUser = {
+  token: string;
   username: string;
 };
 
@@ -34,7 +35,7 @@ export default function App() {
 
     try {
       const result = await authenticate(mode, username, password);
-      setUser(result.user);
+      setUser({ ...result.user, token: result.token });
       setPassword('');
     } catch (submitError) {
       setError(
@@ -52,6 +53,31 @@ export default function App() {
     setError(null);
   }
 
+  async function removeAccount() {
+    if (!user) {
+      return;
+    }
+
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await deleteAccount(user.token);
+      setUser(null);
+      setMode('login');
+      setUsername('');
+      setPassword('');
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : 'Unable to delete your account.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   if (user) {
     return (
       <View style={styles.page}>
@@ -66,11 +92,30 @@ export default function App() {
             <Text style={styles.welcomeDescription}>
               Your account is ready to use.
             </Text>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
             <Pressable
+              accessibilityRole="button"
+              disabled={isSubmitting}
               onPress={() => setUser(null)}
-              style={styles.secondaryButton}
+              style={[
+                styles.secondaryButton,
+                isSubmitting && styles.primaryButtonDisabled,
+              ]}
             >
               <Text style={styles.secondaryButtonText}>Sign out</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isSubmitting}
+              onPress={removeAccount}
+              style={[
+                styles.dangerButton,
+                isSubmitting && styles.primaryButtonDisabled,
+              ]}
+            >
+              <Text style={styles.dangerButtonText}>
+                {isSubmitting ? 'Deleting account...' : 'Delete account'}
+              </Text>
             </Pressable>
           </View>
         </SafeAreaView>
@@ -324,6 +369,19 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: '#405bb6',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dangerButton: {
+    borderWidth: 1,
+    borderColor: '#f0b8b5',
+    borderRadius: 13,
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    marginTop: 12,
+  },
+  dangerButtonText: {
+    color: '#b42318',
     fontSize: 14,
     fontWeight: '700',
   },
