@@ -46,32 +46,57 @@ const displayFontFamily = Platform.select({
   default: undefined,
 });
 
-const dapOptions = ['UberDap', 'UberDap Plus', 'UberDap Deluxe'] as const;
+const dapOptions = [
+  'Dap for Poor People',
+  'Dap (Standard)',
+  'Dap (Wheelchair-Accessible)',
+  'Dap & Dash',
+  'THE GOD DAP',
+  'Professional Handshake (Black-tie)',
+] as const;
 type DapOption = (typeof dapOptions)[number];
 const dapOptionPrices: Record<DapOption, string> = {
-  UberDap: '$21.99',
-  'UberDap Plus': '$36.99',
-  'UberDap Deluxe': '$124.99',
+  'Dap for Poor People': '$0.03',
+  'Dap (Standard)': '$21.99',
+  'Dap (Wheelchair-Accessible)': '$24.99',
+  'Dap & Dash': '$16.99',
+  'THE GOD DAP': '$124.99',
+  'Professional Handshake (Black-tie)': '$529.99',
 };
 
 const DAP_DETAILS: Record<
   DapOption,
   { tag: string; time: string; description: string }
 > = {
-  UberDap: {
+  'Dap for Poor People': {
+    tag: 'BUDGET',
+    time: '2 min',
+    description: 'A basic dap at the lowest price.',
+  },
+  'Dap (Standard)': {
     tag: 'CLASSIC',
     time: '2 min',
-    description: 'Crisp single-contact street snap.',
+    description: 'The classic single-contact dap.',
   },
-  'UberDap Plus': {
-    tag: 'POPULAR',
+  'Dap (Wheelchair-Accessible)': {
+    tag: 'ACCESSIBLE',
     time: '3 min',
-    description: 'Two-handed grip, slide & shoulder tap.',
+    description: 'A wheelchair-accessible dap meetup.',
   },
-  'UberDap Deluxe': {
-    tag: 'VIP PROTOCOL',
+  'Dap & Dash': {
+    tag: 'QUICK',
+    time: '1 min',
+    description: 'A quick dap with a fast exit.',
+  },
+  'THE GOD DAP': {
+    tag: 'PREMIUM',
     time: '5 min',
-    description: '5-step synchronized secret routine.',
+    description: 'The ultimate dap experience.',
+  },
+  'Professional Handshake (Black-tie)': {
+    tag: 'FORMAL',
+    time: '5 min',
+    description: 'A polished handshake for formal occasions.',
   },
 };
 
@@ -194,9 +219,11 @@ export default function MapScreen({
   const [ratingsError, setRatingsError] = useState<string | null>(null);
   const [pendingModeAfterPreferences, setPendingModeAfterPreferences] =
     useState<AppMode | null>(null);
-  const [selectedServices, setSelectedServices] =
-    useState<DapService[]>(offeredServices);
-  const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
+  const [selectedServices, setSelectedServices] = useState<DapService[]>(
+    () => availableDapperServices(offeredServices),
+  );
+  const [selectedDap, setSelectedDap] =
+    useState<DapOption>('Dap (Standard)');
   const [showMatchToast, setShowMatchToast] = useState(false);
   const [isDapperSheetOpen, setIsDapperSheetOpen] = useState(false);
   const [selectedCrispinessRating, setSelectedCrispinessRating] = useState<
@@ -550,7 +577,7 @@ export default function MapScreen({
     setIsDapperLocationReady(true);
     setLocationPrompt(null);
     setLocationTrackingRevision((revision) => revision + 1);
-    void goOnline();
+    void goOnline(result.coordinates);
   }
 
   function handleGoOffline() {
@@ -608,7 +635,7 @@ export default function MapScreen({
   }
 
   useEffect(() => {
-    setSelectedServices(offeredServices);
+    setSelectedServices(availableDapperServices(offeredServices));
   }, [offeredServices]);
 
   useEffect(() => {
@@ -703,7 +730,7 @@ export default function MapScreen({
 
   function openPreferences() {
     setIsMenuOpen(false);
-    setSelectedServices(offeredServices);
+    setSelectedServices(availableDapperServices(offeredServices));
     setIsPreferencesOpen(true);
     preferencesProgress.setValue(0);
     Animated.timing(preferencesProgress, {
@@ -1806,7 +1833,15 @@ export default function MapScreen({
                     {requestLocationError ?? dapRequest.error}
                   </Text>
                 ) : null}
-                <View style={styles.options}>
+                <ScrollView
+                  contentContainerStyle={styles.options}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  style={[
+                    styles.optionListScroll,
+                    { maxHeight: Math.max(48, sheetHeight - 180) },
+                  ]}
+                >
                   {dapOptions.map((option) => {
                     const isSelected = selectedDap === option;
                     const details = DAP_DETAILS[option];
@@ -1868,7 +1903,7 @@ export default function MapScreen({
                       </Pressable>
                     );
                   })}
-                </View>
+                </ScrollView>
                 <Pressable
                   accessibilityRole="button"
                   disabled={isRequestingLocation || dapRequest.isRestoring}
@@ -2073,7 +2108,15 @@ export default function MapScreen({
             <Text style={styles.preferencesDescription}>
               Select at least one service you offer.
             </Text>
-            <View style={styles.options}>
+            <ScrollView
+              contentContainerStyle={styles.options}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              style={[
+                styles.optionListScroll,
+                { maxHeight: Math.max(48, sheetHeight - 225) },
+              ]}
+            >
               {dapOptions.map((service) => {
                 const isSelected = selectedServices.includes(service);
 
@@ -2112,7 +2155,7 @@ export default function MapScreen({
                   </Pressable>
                 );
               })}
-            </View>
+            </ScrollView>
             {error ? <Text style={styles.preferencesError}>{error}</Text> : null}
             <Pressable
               accessibilityRole="button"
@@ -2415,6 +2458,10 @@ function formatRatingDate(isoDate: string): string {
   });
 }
 
+function availableDapperServices(services: readonly DapService[]): DapService[] {
+  return dapOptions.filter((service) => services.includes(service));
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2607,7 +2654,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   menuRatingBadge: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 3,
@@ -3130,7 +3177,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   options: {
-    gap: 12,
+    gap: 8,
+    paddingBottom: 4,
+  },
+  optionListScroll: {
+    flex: 1,
+    minHeight: 0,
   },
   optionButton: {
     minHeight: 64,
@@ -3158,10 +3210,12 @@ const styles = StyleSheet.create({
   },
   optionTitleRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
   },
   optionTitle: {
+    flexShrink: 1,
     color: '#000000',
     fontFamily: displayFontFamily,
     fontSize: 16,
@@ -3502,7 +3556,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   ratingDescriptor: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 8,
@@ -3533,8 +3587,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     backgroundColor: '#ffffff',
-    shadowColor: '#172033',
-    shadowOpacity: 0.22,
+    shadowColor: '#000000',
+    shadowOpacity: 0.15,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: -5 },
   },
@@ -3552,7 +3606,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionTitle: {
-    color: '#172033',
+    color: '#000000',
     fontFamily: displayFontFamily,
     fontSize: 16,
     fontWeight: '700',
@@ -3561,10 +3615,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 8,
-    backgroundColor: '#edf1f8',
+    backgroundColor: '#ececec',
   },
   securityBadgeText: {
-    color: '#314b9a',
+    color: '#000000',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -3587,20 +3641,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#ececec',
   },
   steamSecurityNote: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 13,
     lineHeight: 18,
     marginTop: 10,
   },
   profileErrorText: {
-    color: '#b42318',
+    color: '#ee4d4d',
     fontSize: 13,
     fontWeight: '600',
     marginTop: 10,
     textAlign: 'center',
   },
   profileSuccessText: {
-    color: '#16845b',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 10,
@@ -3638,7 +3692,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   refreshLink: {
-    color: '#405bb6',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -3670,7 +3724,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   ratingCountLabel: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 3,
@@ -3686,7 +3740,7 @@ const styles = StyleSheet.create({
   },
   breakdownStarLabel: {
     width: 24,
-    color: '#34425c',
+    color: '#555555',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -3705,7 +3759,7 @@ const styles = StyleSheet.create({
   breakdownCount: {
     width: 22,
     textAlign: 'right',
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -3717,7 +3771,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   ratingsEmptyText: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 13,
     lineHeight: 18,
     textAlign: 'center',
@@ -3726,7 +3780,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   recentRatingsHeading: {
-    color: '#34425c',
+    color: '#000000',
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -3753,7 +3807,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   recentRaterName: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -3764,7 +3818,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ececec',
   },
   serviceChipText: {
-    color: '#34425c',
+    color: '#555555',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -3774,12 +3828,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recentRatingComment: {
-    color: '#34425c',
+    color: '#555555',
     fontSize: 13,
     lineHeight: 18,
   },
   recentRatingDate: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 11,
   },
 });

@@ -1,7 +1,13 @@
 export type AuthMode = 'login' | 'signup';
 export type AppMode = 'order' | 'dapper';
 export type AuthProvider = 'local' | 'steam';
-export type DapService = 'UberDap' | 'UberDap Plus' | 'UberDap Deluxe';
+export type DapService =
+  | 'Dap for Poor People'
+  | 'Dap (Standard)'
+  | 'Dap (Wheelchair-Accessible)'
+  | 'Dap & Dash'
+  | 'THE GOD DAP'
+  | 'Professional Handshake (Black-tie)';
 
 export type AuthUser = {
   id: string;

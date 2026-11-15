@@ -224,7 +224,7 @@ app.post('/auth/login', async (request, response) => {
 
     if (!passwordVerification.valid) {
       response.status(401).json({
-        message: 'Invalid username or password.',
+        message: 'Incorrect password.',
       });
       return;
     }
@@ -1160,7 +1160,7 @@ async function handleRealtimeMessage(
     session.isAuthenticating = false;
 
     if (user.activeMode === 'dapper') {
-      const offeredServices = user.offeredServices ?? [];
+      const offeredServices = (user.offeredServices ?? []).filter(isDapService);
       if (offeredServices.length === 0) {
         socket.close(1008, 'Choose at least one dapper service first.');
         return;
@@ -2142,7 +2142,7 @@ function serializeUser(user: {
     steamUsername: user.steamUsername ?? null,
     steamAvatar: user.steamAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
-    offeredServices: user.offeredServices ?? [],
+    offeredServices: (user.offeredServices ?? []).filter(isDapService),
     crispinessRating:
       ratingCount > 0 ? Number((ratingTotal / ratingCount).toFixed(2)) : null,
     crispinessRatingCount: ratingCount,

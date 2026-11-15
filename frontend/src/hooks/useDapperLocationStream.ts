@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { dapperLocationWebSocketUrl } from '../api/auth';
+import type { Coordinates } from '../location/dapperLocation';
 
 export type DapperOffer = {
   requestId: string;
@@ -24,7 +25,7 @@ type DapperLocationStreamState = {
   connectionError: string | null;
   declineOffer: () => void;
   goOffline: () => void;
-  goOnline: () => Promise<void>;
+  goOnline: (initialLocation: Coordinates) => Promise<void>;
   isResponding: boolean;
   isConnecting: boolean;
   isOnline: boolean;
@@ -54,6 +55,9 @@ export function useDapperLocationStream(
   const socketRef = useRef<WebSocket | null>(null);
   const locationSubscriptionRef =
     useRef<Location.LocationSubscription | null>(null);
+  const locationHeartbeatRef =
+    useRef<ReturnType<typeof setInterval> | null>(null);
+  const latestLocationRef = useRef<Coordinates | null>(null);
   const isOnlineRef = useRef(false);
   const isMountedRef = useRef(false);
   const isEnabledRef = useRef(enabled);
@@ -64,8 +68,17 @@ export function useDapperLocationStream(
   isEnabledRef.current = enabled;
   onRatingReceivedRef.current = onRatingReceived;
 
+  const stopLocationHeartbeat = useCallback(() => {
+    if (locationHeartbeatRef.current) {
+      clearInterval(locationHeartbeatRef.current);
+      locationHeartbeatRef.current = null;
+    }
+  }, []);
+
   const stopStreaming = useCallback(() => {
     isOnlineRef.current = false;
+    latestLocationRef.current = null;
+    stopLocationHeartbeat();
     if (isMountedRef.current) {
       setIsOnline(false);
     }
@@ -79,7 +92,7 @@ export function useDapperLocationStream(
     if (socket && socket.readyState < WebSocket.CLOSING) {
       socket.close(1000, 'Dapper went offline.');
     }
-  }, []);
+  }, [stopLocationHeartbeat]);
 
   const handleConnectionClosed = useCallback(
     (socket: WebSocket) => {
@@ -89,6 +102,8 @@ export function useDapperLocationStream(
 
       socketRef.current = null;
       isOnlineRef.current = false;
+      latestLocationRef.current = null;
+      stopLocationHeartbeat();
       locationSubscriptionRef.current?.remove();
       locationSubscriptionRef.current = null;
 
@@ -102,7 +117,32 @@ export function useDapperLocationStream(
         }
       }
     },
-    [],
+    [stopLocationHeartbeat],
+  );
+
+  const sendLocation = useCallback(
+    (socket: WebSocket, location: Coordinates) => {
+      if (
+        !isOnlineRef.current ||
+        !isEnabledRef.current ||
+        socketRef.current !== socket ||
+        socket.readyState !== WebSocket.OPEN
+      ) {
+        return;
+      }
+
+      latestLocationRef.current = location;
+      if (isMountedRef.current) {
+        setLocation(location);
+      }
+
+      try {
+        socket.send(JSON.stringify({ type: 'location', ...location }));
+      } catch {
+        handleConnectionClosed(socket);
+      }
+    },
+    [handleConnectionClosed],
   );
 
   useEffect(() => {
@@ -123,7 +163,7 @@ export function useDapperLocationStream(
     }
   }, [enabled, stopStreaming]);
 
-  const goOnline = useCallback(async () => {
+  const goOnline = useCallback(async (initialLocation: Coordinates) => {
     if (!isEnabledRef.current || isOnlineRef.current) {
       return;
     }
@@ -165,6 +205,7 @@ export function useDapperLocationStream(
       }
 
       isOnlineRef.current = true;
+      sendLocation(socket, initialLocation);
 
       const subscription = await Location.watchPositionAsync(
         {
@@ -173,31 +214,10 @@ export function useDapperLocationStream(
           timeInterval: 3000,
         },
         (position) => {
-          if (
-            !isOnlineRef.current ||
-            !isEnabledRef.current ||
-            socketRef.current !== socket ||
-            socket.readyState !== WebSocket.OPEN
-          ) {
-            return;
-          }
-
-          const currentLocation = {
+          sendLocation(socket, {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
-          };
-          setLocation(currentLocation);
-
-          try {
-            socket.send(
-              JSON.stringify({
-                type: 'location',
-                ...currentLocation,
-              }),
-            );
-          } catch {
-            handleConnectionClosed(socket);
-          }
+          });
         },
       );
 
@@ -213,6 +233,13 @@ export function useDapperLocationStream(
 
       locationSubscriptionRef.current = subscription;
       setIsOnline(true);
+      stopLocationHeartbeat();
+      locationHeartbeatRef.current = setInterval(() => {
+        const latestLocation = latestLocationRef.current;
+        if (latestLocation) {
+          sendLocation(socket, latestLocation);
+        }
+      }, 5000);
     } catch (error) {
       stopStreaming();
       if (isMountedRef.current && isEnabledRef.current) {
@@ -227,7 +254,13 @@ export function useDapperLocationStream(
         setIsConnecting(false);
       }
     }
-  }, [handleConnectionClosed, stopStreaming, token]);
+  }, [
+    handleConnectionClosed,
+    sendLocation,
+    stopLocationHeartbeat,
+    stopStreaming,
+    token,
+  ]);
 
   const goOffline = useCallback(() => {
     setConnectionError(null);

@@ -3,9 +3,12 @@ import { model, Schema } from 'mongoose';
 export type AppMode = 'order' | 'dapper';
 export type AuthProvider = 'local' | 'steam';
 export const DAP_SERVICES = [
-  'UberDap',
-  'UberDap Plus',
-  'UberDap Deluxe',
+  'Dap for Poor People',
+  'Dap (Standard)',
+  'Dap (Wheelchair-Accessible)',
+  'Dap & Dash',
+  'THE GOD DAP',
+  'Professional Handshake (Black-tie)',
 ] as const;
 export type DapService = (typeof DAP_SERVICES)[number];
 
