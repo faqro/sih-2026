@@ -251,6 +251,7 @@ export default function App() {
             onChangeMode={(nextMode) => void handleChangeMapMode(nextMode)}
             onDeleteAccount={() => void removeAccount()}
             onSignOut={() => signOut()}
+            token={user.token}
           />
         </View>
       </View>

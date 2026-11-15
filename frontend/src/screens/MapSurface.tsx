@@ -1,5 +1,10 @@
-import { useEffect, useRef } from 'react';
-import MapView, { Marker, type Region } from 'react-native-maps';
+import { memo, useEffect, useRef } from 'react';
+import MapView, {
+  Marker,
+  PROVIDER_GOOGLE,
+  type MapStyleElement,
+  type Region,
+} from 'react-native-maps';
 import { StyleSheet, View } from 'react-native';
 
 import type { AppMode } from '../api/auth';
@@ -23,12 +28,36 @@ function toActiveRegion(location: Coordinates): Region {
   };
 }
 
+const minimalMapStyle: MapStyleElement[] = [
+  { elementType: 'geometry', stylers: [{ color: '#f3f5f6' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#70777c' }] },
+  { featureType: 'administrative', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  {
+    featureType: 'road',
+    elementType: 'geometry',
+    stylers: [{ color: '#ffffff' }],
+  },
+  {
+    featureType: 'road',
+    elementType: 'labels',
+    stylers: [{ visibility: 'off' }],
+  },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  {
+    featureType: 'water',
+    elementType: 'geometry',
+    stylers: [{ color: '#dce7ed' }],
+  },
+];
+
 export type MapSurfaceProps = {
   location: Coordinates | null;
   mode: AppMode;
 };
 
-export default function MapSurface({ location, mode }: MapSurfaceProps) {
+function MapSurface({ location, mode }: MapSurfaceProps) {
   const mapRef = useRef<MapView>(null);
   const isMapReadyRef = useRef(false);
   const initialHadLocationRef = useRef(Boolean(location));
@@ -62,6 +91,7 @@ export default function MapSurface({ location, mode }: MapSurfaceProps) {
   return (
     <MapView
       ref={mapRef}
+      customMapStyle={minimalMapStyle}
       initialRegion={initialRegionRef.current}
       onMapReady={() => {
         isMapReadyRef.current = true;
@@ -74,6 +104,7 @@ export default function MapSurface({ location, mode }: MapSurfaceProps) {
           mapRef.current?.animateToRegion(DEFAULT_REGION, 0);
         }
       }}
+      provider={PROVIDER_GOOGLE}
       showsMyLocationButton={false}
       showsUserLocation={false}
       style={StyleSheet.absoluteFill}
@@ -115,3 +146,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#314b9a',
   },
 });
+
+export default memo(MapSurface);

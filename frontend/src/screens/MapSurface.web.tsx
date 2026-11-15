@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { CircleMarker, MapContainer, TileLayer, useMap } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import { StyleSheet } from 'react-native';
@@ -46,7 +46,7 @@ function MapViewportController({
   return null;
 }
 
-export default function MapSurface({ location, mode }: MapSurfaceProps) {
+function MapSurface({ location, mode }: MapSurfaceProps) {
   const initialCenter: LatLngExpression = location
     ? [location.latitude, location.longitude]
     : DEFAULT_CENTER;
@@ -54,7 +54,12 @@ export default function MapSurface({ location, mode }: MapSurfaceProps) {
   const markerFillColor = mode === 'dapper' ? '#314b9a' : '#000000';
 
   return (
-    <MapContainer center={initialCenter} zoom={initialZoom} style={styles.map}>
+    <MapContainer
+      center={initialCenter}
+      zoom={initialZoom}
+      zoomControl={false}
+      style={styles.map}
+    >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -82,3 +87,5 @@ const styles = StyleSheet.create({
     width: '100%',
   },
 });
+
+export default memo(MapSurface);
