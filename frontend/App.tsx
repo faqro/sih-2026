@@ -19,6 +19,7 @@ import {
   type AccountType,
   type AuthMode,
 } from './src/api/auth';
+import DapperScreen from './src/screens/DapperScreen';
 import UserMapScreen from './src/screens/UserMapScreen';
 
 type SignedInUser = {
@@ -107,41 +108,14 @@ export default function App() {
       <View style={styles.page}>
         <SafeAreaView style={styles.app}>
           <StatusBar style="dark" />
-          <View style={styles.signedInContent}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{user.username.charAt(0)}</Text>
-            </View>
-            <Text style={styles.eyebrow}>DAPPER ACCOUNT</Text>
-            <Text style={styles.welcomeTitle}>Dapper dashboard</Text>
-            <Text style={styles.welcomeDescription}>
-              Welcome, {user.username}. Dapper features are coming soon.
-            </Text>
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <Pressable
-              accessibilityRole="button"
-              disabled={isSubmitting}
-              onPress={() => setUser(null)}
-              style={[
-                styles.secondaryButton,
-                isSubmitting && styles.primaryButtonDisabled,
-              ]}
-            >
-              <Text style={styles.secondaryButtonText}>Sign out</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={isSubmitting}
-              onPress={removeAccount}
-              style={[
-                styles.dangerButton,
-                isSubmitting && styles.primaryButtonDisabled,
-              ]}
-            >
-              <Text style={styles.dangerButtonText}>
-                {isSubmitting ? 'Deleting account...' : 'Delete account'}
-              </Text>
-            </Pressable>
-          </View>
+          <DapperScreen
+            accountError={error}
+            isSubmitting={isSubmitting}
+            onDeleteAccount={removeAccount}
+            onSignOut={() => setUser(null)}
+            token={user.token}
+            username={user.username}
+          />
         </SafeAreaView>
       </View>
     );
@@ -345,70 +319,6 @@ const styles = StyleSheet.create({
   },
   modeLink: {
     color: '#405bb6',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  signedInContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 30,
-  },
-  avatar: {
-    width: 76,
-    height: 76,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 38,
-    marginBottom: 23,
-    backgroundColor: '#dfe7ff',
-  },
-  avatarText: {
-    color: '#314b9a',
-    fontSize: 32,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  eyebrow: {
-    color: '#526cc2',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    marginBottom: 8,
-  },
-  welcomeTitle: {
-    color: '#172033',
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  welcomeDescription: {
-    color: '#6f7a90',
-    fontSize: 15,
-    marginBottom: 27,
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: '#cbd3e3',
-    borderRadius: 13,
-    paddingHorizontal: 22,
-    paddingVertical: 13,
-  },
-  secondaryButtonText: {
-    color: '#405bb6',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  dangerButton: {
-    borderWidth: 1,
-    borderColor: '#f0b8b5',
-    borderRadius: 13,
-    paddingHorizontal: 22,
-    paddingVertical: 13,
-    marginTop: 12,
-  },
-  dangerButtonText: {
-    color: '#b42318',
     fontSize: 14,
     fontWeight: '700',
   },

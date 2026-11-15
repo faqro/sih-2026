@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { CircleMarker, MapContainer, TileLayer } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import { StyleSheet } from 'react-native';
@@ -11,7 +12,7 @@ type UserMapSurfaceProps = {
   };
 };
 
-export default function UserMapSurface({ location }: UserMapSurfaceProps) {
+function UserMapSurface({ location }: UserMapSurfaceProps) {
   const center: LatLngExpression = [location.latitude, location.longitude];
 
   return (
@@ -40,3 +41,5 @@ const styles = StyleSheet.create({
     width: '100%',
   },
 });
+
+export default memo(UserMapSurface);

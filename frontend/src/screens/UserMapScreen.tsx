@@ -41,9 +41,14 @@ export default function UserMapScreen({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
   const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
+  const [matchDeadline, setMatchDeadline] = useState<number | null>(null);
+  const [matchSecondsRemaining, setMatchSecondsRemaining] = useState(600);
+  const [showMatchToast, setShowMatchToast] = useState(false);
   const { height: viewportHeight } = useWindowDimensions();
   const sheetHeight = viewportHeight / 2;
   const sheetProgress = useRef(new Animated.Value(0)).current;
+  const matchExpiredRef = useRef(false);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetTranslateY = sheetProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [sheetHeight, 0],
@@ -98,6 +103,46 @@ export default function UserMapScreen({
     };
   }, [attempt]);
 
+  useEffect(() => {
+    if (matchDeadline === null) {
+      return;
+    }
+
+    const updateCountdown = () => {
+      const secondsRemaining = Math.max(
+        0,
+        Math.ceil((matchDeadline - Date.now()) / 1000),
+      );
+      setMatchSecondsRemaining(secondsRemaining);
+
+      if (secondsRemaining === 0 && !matchExpiredRef.current) {
+        matchExpiredRef.current = true;
+        setMatchDeadline(null);
+        setShowMatchToast(true);
+        toastTimeoutRef.current = setTimeout(() => {
+          setShowMatchToast(false);
+          toastTimeoutRef.current = null;
+        }, 3000);
+      }
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [matchDeadline]);
+
+  useEffect(
+    () => () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   function openRequestMenu() {
     setIsMenuOpen(false);
     setIsRequestMenuOpen(true);
@@ -110,6 +155,8 @@ export default function UserMapScreen({
   }
 
   function closeRequestMenu() {
+    setMatchDeadline(null);
+    setMatchSecondsRemaining(600);
     Animated.timing(sheetProgress, {
       toValue: 0,
       duration: 220,
@@ -120,6 +167,23 @@ export default function UserMapScreen({
       }
     });
   }
+
+  function confirmRequest() {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+
+    setShowMatchToast(false);
+    matchExpiredRef.current = false;
+    setMatchSecondsRemaining(600);
+    setMatchDeadline(Date.now() + 10 * 60 * 1000);
+  }
+
+  const matchMinutesRemaining = Math.ceil(matchSecondsRemaining / 60);
+  const formattedMinutes = Math.floor(matchSecondsRemaining / 60);
+  const formattedSeconds = String(matchSecondsRemaining % 60).padStart(2, '0');
+  const formattedSecondsRemaining = `${formattedMinutes}:${formattedSeconds}`;
 
   return (
     <View style={styles.container}>
@@ -209,53 +273,92 @@ export default function UserMapScreen({
             ]}
           >
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Choose your UberDap</Text>
+              <Text style={styles.sheetTitle}>
+                {matchDeadline === null
+                  ? 'Choose your UberDap'
+                  : 'Finding a dapper'}
+              </Text>
               <Pressable
                 accessibilityLabel="Close request menu"
                 accessibilityRole="button"
                 onPress={closeRequestMenu}
                 style={styles.sheetCloseButton}
               >
-                <Text style={styles.sheetCloseText}>Close</Text>
+                <Text style={styles.sheetCloseText}>
+                  {matchDeadline === null ? 'Close' : 'Cancel'}
+                </Text>
               </Pressable>
             </View>
-            <View style={styles.options}>
-              {dapOptions.map((option) => {
-                const isSelected = selectedDap === option;
+            {matchDeadline === null ? (
+              <>
+                <View style={styles.options}>
+                  {dapOptions.map((option) => {
+                    const isSelected = selectedDap === option;
 
-                return (
-                  <Pressable
-                    accessibilityLabel={option}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: isSelected }}
-                    key={option}
-                    onPress={() => setSelectedDap(option)}
-                    style={[
-                      styles.optionButton,
-                      isSelected && styles.optionButtonSelected,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.radio,
-                        isSelected && styles.radioSelected,
-                      ]}
-                    >
-                      {isSelected ? <View style={styles.radioDot} /> : null}
-                    </View>
-                    <Text
-                      style={[
-                        styles.optionText,
-                        isSelected && styles.optionTextSelected,
-                      ]}
-                    >
-                      {option}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+                    return (
+                      <Pressable
+                        accessibilityLabel={option}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: isSelected }}
+                        key={option}
+                        onPress={() => setSelectedDap(option)}
+                        style={[
+                          styles.optionButton,
+                          isSelected && styles.optionButtonSelected,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.radio,
+                            isSelected && styles.radioSelected,
+                          ]}
+                        >
+                          {isSelected ? <View style={styles.radioDot} /> : null}
+                        </View>
+                        <Text
+                          style={[
+                            styles.optionText,
+                            isSelected && styles.optionTextSelected,
+                          ]}
+                        >
+                          {option}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={confirmRequest}
+                  style={styles.confirmButton}
+                >
+                  <Text style={styles.confirmButtonText}>
+                    Confirm UberDap
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <View style={styles.matchingContent}>
+                <ActivityIndicator color="#314b9a" size="large" />
+                <Text style={styles.matchingText}>
+                  Matching you with a dapper within the next{' '}
+                  {matchMinutesRemaining}{' '}
+                  {matchMinutesRemaining === 1 ? 'minute' : 'minutes'}...
+                </Text>
+                <Text style={styles.matchingCountdown}>
+                  {formattedSecondsRemaining} remaining
+                </Text>
+              </View>
+            )}
           </Animated.View>
+        ) : null}
+
+        {showMatchToast ? (
+          <View pointerEvents="none" style={styles.toast}>
+            <Text style={styles.toastText}>
+              We couldn't match you with a dapper. Try again later.
+            </Text>
+          </View>
         ) : null}
       </SafeAreaView>
     </View>
@@ -485,5 +588,59 @@ const styles = StyleSheet.create({
   },
   optionTextSelected: {
     color: '#314b9a',
+  },
+  confirmButton: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    marginTop: 16,
+    backgroundColor: '#314b9a',
+  },
+  confirmButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  matchingContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  matchingText: {
+    color: '#34425c',
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 18,
+    textAlign: 'center',
+  },
+  matchingCountdown: {
+    color: '#6f7a90',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  toast: {
+    position: 'absolute',
+    top: 16,
+    alignSelf: 'center',
+    zIndex: 1105,
+    elevation: 16,
+    maxWidth: '90%',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    backgroundColor: '#172033',
+    shadowColor: '#172033',
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  toastText: {
+    color: '#ffffff',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
   },
 });

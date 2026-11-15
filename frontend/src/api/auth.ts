@@ -13,6 +13,12 @@ type AuthResponse = {
 const apiUrl = (
   process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
 ).replace(/\/$/, '');
+const webSocketApiUrl = apiUrl
+  .replace(/^https:/, 'wss:')
+  .replace(/^http:/, 'ws:');
+
+export const dapperLocationWebSocketUrl =
+  `${webSocketApiUrl}/ws/dapper-location`;
 
 export async function authenticate(
   mode: AuthMode,

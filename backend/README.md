@@ -37,6 +37,14 @@ the returned user object. `DELETE /auth/account` deletes the account belonging
 to a valid bearer token; it requires the `Authorization: Bearer <token>` header
 and returns `204` on success.
 
+The WebSocket endpoint `/ws/dapper-location` accepts an initial JSON message
+`{"type":"authenticate","token":"<jwt>"}`. Only a token belonging to a dapper
+account is accepted. Authenticated dappers send
+`{"type":"location","latitude":...,"longitude":...}` updates while online.
+The backend keeps each connected dapper's latest location in memory only and
+removes it when that dapper goes offline or disconnects; positions are not
+stored in MongoDB.
+
 ## Fly.io deployment
 
 The GitHub Actions workflow deploys the backend when a commit is pushed to `main`.

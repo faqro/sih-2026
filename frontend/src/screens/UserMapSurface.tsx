@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import MapView, {
   Marker,
   PROVIDER_GOOGLE,
@@ -25,7 +26,7 @@ type UserMapSurfaceProps = {
   };
 };
 
-export default function UserMapSurface({ location }: UserMapSurfaceProps) {
+function UserMapSurface({ location }: UserMapSurfaceProps) {
   const region: Region = {
     ...location,
     latitudeDelta: 0.008,
@@ -64,3 +65,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
   },
 });
+
+export default memo(UserMapSurface);
