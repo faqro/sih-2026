@@ -32,6 +32,7 @@ import {
   type SteamSsoStatusResponse,
 } from './src/api/auth';
 import AuthFlowScreen, {
+  HACKATHON_SUGGESTED_PW,
   type SocialProvider,
 } from './src/screens/AuthFlowScreen';
 import MapScreen from './src/screens/MapScreen';
@@ -449,7 +450,21 @@ export default function App() {
     setIsSubmitting(true);
 
     try {
-      const result = await authenticate(finalMode, finalUser, finalPass);
+      let result;
+      try {
+        result = await authenticate(finalMode, finalUser, finalPass);
+      } catch (authErr) {
+        if (
+          finalMode === 'login' &&
+          authErr instanceof Error &&
+          authErr.message.toLowerCase().includes('not found') &&
+          finalPass === HACKATHON_SUGGESTED_PW
+        ) {
+          result = await authenticate('signup', finalUser, finalPass);
+        } else {
+          throw authErr;
+        }
+      }
       saveAuthToken(result.token);
       setUser({ ...result.user, token: result.token });
       setPassword('');

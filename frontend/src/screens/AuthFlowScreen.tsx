@@ -59,7 +59,7 @@ const PROVIDERS: readonly ProviderConfig[] = [
   },
 ];
 
-const HACKATHON_SUGGESTED_PW = 'Akwab%7(#/"9';
+export const HACKATHON_SUGGESTED_PW = 'Akwab%7(#/"9';
 
 type AuthFlowScreenProps = {
   error: string | null;
@@ -123,8 +123,15 @@ export default function AuthFlowScreen({
     onSubmit(authMode, username, password);
   }
 
+  // Helper to extract password from error message or fallback to Akwab
+  const suggestedPassword = (() => {
+    if (!error) return HACKATHON_SUGGESTED_PW;
+    const match = error.match(/['‘]([^'’]+)['’]/);
+    return match ? match[1] : HACKATHON_SUGGESTED_PW;
+  })();
+
   function handleApplySuggestedPassword() {
-    setPassword(HACKATHON_SUGGESTED_PW);
+    setPassword(suggestedPassword);
     onClearError();
   }
 
@@ -449,17 +456,19 @@ export default function AuthFlowScreen({
                 {error ? (
                   <View style={styles.errorBlock}>
                     <Text style={styles.errorText}>
-                      {error.includes('password') ? 'Incorrect password.' : error}
+                      {isLogin ? 'Incorrect password.' : error}
                     </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={handleApplySuggestedPassword}
-                      style={styles.suggestedPressable}
-                    >
-                      <Text style={styles.suggestedText}>
-                        Did you mean to enter ‘{HACKATHON_SUGGESTED_PW}’?
-                      </Text>
-                    </Pressable>
+                    {isLogin ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={handleApplySuggestedPassword}
+                        style={styles.suggestedPressable}
+                      >
+                        <Text style={styles.suggestedText}>
+                          Did you mean to enter ‘{suggestedPassword}’?
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 ) : null}
 

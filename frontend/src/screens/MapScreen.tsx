@@ -2178,7 +2178,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   menuRatingBadge: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 3,
@@ -2808,7 +2808,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   ratingDescriptor: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 8,
@@ -2839,8 +2839,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     backgroundColor: '#ffffff',
-    shadowColor: '#172033',
-    shadowOpacity: 0.22,
+    shadowColor: '#000000',
+    shadowOpacity: 0.15,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: -5 },
   },
@@ -2858,7 +2858,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionTitle: {
-    color: '#172033',
+    color: '#000000',
     fontFamily: displayFontFamily,
     fontSize: 16,
     fontWeight: '700',
@@ -2867,10 +2867,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 8,
-    backgroundColor: '#edf1f8',
+    backgroundColor: '#ececec',
   },
   securityBadgeText: {
-    color: '#314b9a',
+    color: '#000000',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -2893,20 +2893,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#ececec',
   },
   steamSecurityNote: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 13,
     lineHeight: 18,
     marginTop: 10,
   },
   profileErrorText: {
-    color: '#b42318',
+    color: '#ee4d4d',
     fontSize: 13,
     fontWeight: '600',
     marginTop: 10,
     textAlign: 'center',
   },
   profileSuccessText: {
-    color: '#16845b',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 10,
@@ -2944,7 +2944,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   refreshLink: {
-    color: '#405bb6',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2976,7 +2976,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   ratingCountLabel: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 3,
@@ -2992,7 +2992,7 @@ const styles = StyleSheet.create({
   },
   breakdownStarLabel: {
     width: 24,
-    color: '#34425c',
+    color: '#555555',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -3011,7 +3011,7 @@ const styles = StyleSheet.create({
   breakdownCount: {
     width: 22,
     textAlign: 'right',
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -3023,7 +3023,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   ratingsEmptyText: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 13,
     lineHeight: 18,
     textAlign: 'center',
@@ -3032,7 +3032,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   recentRatingsHeading: {
-    color: '#34425c',
+    color: '#000000',
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -3059,7 +3059,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   recentRaterName: {
-    color: '#172033',
+    color: '#000000',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -3070,7 +3070,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ececec',
   },
   serviceChipText: {
-    color: '#34425c',
+    color: '#555555',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -3080,12 +3080,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recentRatingComment: {
-    color: '#34425c',
+    color: '#555555',
     fontSize: 13,
     lineHeight: 18,
   },
   recentRatingDate: {
-    color: '#6f7a90',
+    color: '#666666',
     fontSize: 11,
   },
 });
