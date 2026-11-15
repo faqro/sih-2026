@@ -371,7 +371,7 @@ export default function AuthFlowScreen({
                         )}
                         <Text style={styles.providerButtonText}>
                           {isPending
-                            ? 'Connecting to Steam...'
+                            ? `Connecting to ${provider.label.replace('Continue with ', '')}...`
                             : provider.label}
                         </Text>
                       </View>
@@ -390,7 +390,11 @@ export default function AuthFlowScreen({
                   ]}
                 >
                   <Text style={styles.cancelPendingText}>
-                    Cancel {pendingProvider === 'steam' ? 'Steam ' : ''}sign-in
+                    Cancel {pendingProvider === 'steam'
+                      ? 'Steam '
+                      : pendingProvider === 'strava'
+                        ? 'Strava '
+                        : ''}sign-in
                   </Text>
                 </Pressable>
               ) : null}

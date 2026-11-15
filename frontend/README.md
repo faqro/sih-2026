@@ -29,6 +29,10 @@ decline offers, and an accepted request stays active until **Dap Delivered**.
 Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL` to the backend URL.
 For local web development, use `http://localhost:3000`. For a deployed frontend,
 use the public HTTPS URL of the Fly.io backend.
+Strava OAuth credentials belong only in the backend environment; do not add
+`STRAVA_CLIENT_SECRET` or other Strava credentials to Expo or Cloudflare
+environment variables. The frontend only needs its public
+`EXPO_PUBLIC_API_URL`.
 
 ## Cloudflare Pages deployment
 

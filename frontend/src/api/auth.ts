@@ -1,6 +1,6 @@
 export type AuthMode = 'login' | 'signup';
 export type AppMode = 'order' | 'dapper';
-export type AuthProvider = 'local' | 'steam';
+export type AuthProvider = 'local' | 'steam' | 'strava';
 export type DapService =
   | 'Dap for Poor People'
   | 'Dap (Standard)'
@@ -16,6 +16,8 @@ export type AuthUser = {
   authProvider?: AuthProvider;
   steamUsername?: string | null;
   steamAvatar?: string | null;
+  stravaUsername?: string | null;
+  stravaAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   crispinessRating?: number | null;
@@ -67,6 +69,10 @@ export type SteamSsoCancelResponse = {
   status: string;
   cancelled: boolean;
 };
+
+export type StravaSsoStartResponse = SteamSsoStartResponse;
+export type StravaSsoStatusResponse = SteamSsoStatusResponse;
+export type StravaSsoCancelResponse = SteamSsoCancelResponse;
 
 export type OnboardingChoice =
   | { mode: 'order' }
@@ -314,5 +320,58 @@ export function cancelSteamSso(
       body: JSON.stringify({ state, pollToken }),
     },
     'Unable to cancel Steam Sign-In.',
+  );
+}
+
+export function startStravaSso(
+  returnTo?: string,
+): Promise<StravaSsoStartResponse> {
+  return requestJson<StravaSsoStartResponse>(
+    '/auth/strava/start',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(returnTo ? { returnTo } : {}),
+    },
+    'Unable to start Strava Sign-In.',
+  );
+}
+
+export function exchangeStravaSsoCode(code: string): Promise<AuthResponse> {
+  return requestJson<AuthResponse>(
+    '/auth/strava/exchange',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    },
+    'Unable to complete Strava Sign-In.',
+  );
+}
+
+export function fetchStravaSsoStatus(
+  state: string,
+  pollToken: string,
+): Promise<StravaSsoStatusResponse> {
+  const params = new URLSearchParams({ state, pollToken });
+  return requestJson<StravaSsoStatusResponse>(
+    `/auth/strava/status?${params.toString()}`,
+    { method: 'GET' },
+    'Unable to check Strava Sign-In status.',
+  );
+}
+
+export function cancelStravaSso(
+  state: string,
+  pollToken: string,
+): Promise<StravaSsoCancelResponse> {
+  return requestJson<StravaSsoCancelResponse>(
+    '/auth/strava/cancel',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, pollToken }),
+    },
+    'Unable to cancel Strava Sign-In.',
   );
 }

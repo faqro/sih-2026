@@ -22,6 +22,18 @@ import {
   verifySteamOpenIdCallback,
   type SteamUserProfile,
 } from './steamAuth.js';
+import {
+  StravaAuthConfigError,
+  StravaAuthFlowError,
+  cancelStravaAuthSession,
+  completeStravaSessionWithCode,
+  getStravaAuthSession,
+  getStravaAuthSessionForPoll,
+  markStravaSessionError,
+  verifyStravaOAuthCallback,
+  createStravaAuthorizationSession,
+  type StravaUserProfile,
+} from './stravaAuth.js';
 import { DapRating } from './models/DapRating.js';
 import {
   DAP_SERVICES,
@@ -209,10 +221,11 @@ app.post('/auth/login', async (request, response) => {
       return;
     }
 
-    if (user.authProvider === 'steam' || !user.password) {
+    if (user.authProvider !== 'local' || !user.password) {
+      const provider =
+        user.authProvider === 'strava' ? 'Strava' : 'Steam';
       response.status(400).json({
-        message:
-          'This account uses Steam Sign-In. Please tap "Continue with Steam".',
+        message: `This account uses ${provider} Sign-In. Please tap "Continue with ${provider}".`,
       });
       return;
     }
@@ -467,6 +480,202 @@ app.post('/auth/steam/cancel', (request, response) => {
   });
 });
 
+app.post('/auth/strava/start', (request, response) => {
+  const body: unknown = request.body;
+  const rawReturnTo =
+    isRecord(body) && typeof body.returnTo === 'string' ? body.returnTo : null;
+  const returnTo = resolveSafeReturnTo(rawReturnTo);
+
+  try {
+    const redirectUri = resolveStravaRedirectUri(request);
+    const session = createStravaAuthorizationSession({ redirectUri, returnTo });
+    response.status(200).json(session);
+  } catch (error) {
+    if (error instanceof StravaAuthConfigError) {
+      response.status(503).json({ message: error.message });
+      return;
+    }
+    if (error instanceof StravaAuthFlowError) {
+      response.status(error.status).json({ message: error.message });
+      return;
+    }
+    console.error('Unable to start Strava SSO:', error);
+    response.status(500).json({ message: 'Unable to start Strava Sign-In.' });
+  }
+});
+
+app.get('/auth/strava/callback', async (request, response) => {
+  const state =
+    typeof request.query.state === 'string' ? request.query.state : '';
+  const existingSession = state ? getStravaAuthSession(state) : null;
+  const fallbackReturnTo = resolveSafeReturnTo(existingSession?.returnTo ?? null);
+  const callbackError =
+    typeof request.query.error === 'string' ? request.query.error : '';
+
+  if (callbackError) {
+    const message =
+      callbackError === 'access_denied'
+        ? 'Strava sign-in was cancelled.'
+        : 'Strava authorization failed.';
+    markStravaSessionError(state, message);
+    sendStravaCallbackError(response, fallbackReturnTo, message);
+    return;
+  }
+  if (!state) {
+    const message = 'Missing Strava sign-in state parameter.';
+    sendStravaCallbackError(response, fallbackReturnTo, message);
+    return;
+  }
+
+  try {
+    const code = typeof request.query.code === 'string' ? request.query.code : '';
+    if (!code) {
+      throw new StravaAuthFlowError(
+        'Strava did not return an authorization code.',
+        400,
+      );
+    }
+    const { profile, session } = await verifyStravaOAuthCallback({
+      state,
+      code,
+      scope: typeof request.query.scope === 'string' ? request.query.scope : '',
+    });
+    if (session.status !== 'pending') {
+      throw new StravaAuthFlowError('Strava sign-in was cancelled.', 400);
+    }
+
+    const user = await findOrCreateStravaUser(profile);
+    const serialized = serializeUser(user);
+    const token = signUserToken(serialized);
+    const exchangeCode = createExchangeCode(token, serialized);
+    if (!completeStravaSessionWithCode(state, exchangeCode)) {
+      consumeExchangeCode(exchangeCode);
+      throw new StravaAuthFlowError('Strava sign-in was cancelled.', 400);
+    }
+
+    const targetReturnTo = resolveSafeReturnTo(session.returnTo);
+    if (targetReturnTo && isHttpUrl(targetReturnTo)) {
+      const redirectTarget = new URL(targetReturnTo);
+      redirectTarget.searchParams.set('strava_code', exchangeCode);
+      response.redirect(302, redirectTarget.toString());
+      return;
+    }
+
+    const deepLinkTarget = buildNativeStravaDeepLink(targetReturnTo, {
+      strava_code: exchangeCode,
+    });
+    response
+      .status(200)
+      .type('html')
+      .send(
+        renderSteamCallbackHtml(
+          'Signed in with Strava',
+          'Returning you to UberDaps. Tap the button below if the app does not open automatically.',
+          deepLinkTarget,
+        ),
+      );
+  } catch (error) {
+    const message =
+      error instanceof StravaAuthConfigError ||
+      error instanceof StravaAuthFlowError
+        ? error.message
+        : 'Unable to complete Strava Sign-In.';
+    console.error('Strava SSO callback error:', error);
+    markStravaSessionError(state, message);
+    sendStravaCallbackError(response, fallbackReturnTo, message);
+  }
+});
+
+app.post('/auth/strava/exchange', (request, response) => {
+  const body: unknown = request.body;
+  if (
+    !isRecord(body) ||
+    typeof body.code !== 'string' ||
+    body.code.trim().length === 0
+  ) {
+    response.status(400).json({ message: 'Strava exchange code is required.' });
+    return;
+  }
+  const payload = consumeExchangeCode<SerializedUser>(body.code.trim());
+  if (!payload) {
+    response.status(401).json({
+      message: 'Strava sign-in session expired. Please try again.',
+    });
+    return;
+  }
+  response.status(200).json(payload);
+});
+
+app.get('/auth/strava/status', (request, response) => {
+  const state =
+    typeof request.query.state === 'string' ? request.query.state.trim() : '';
+  const pollToken =
+    typeof request.query.pollToken === 'string'
+      ? request.query.pollToken.trim()
+      : request.get('x-strava-poll-token')?.trim() || '';
+  if (!state || !pollToken) {
+    response.status(400).json({ message: 'Missing Strava state or pollToken.' });
+    return;
+  }
+  const lookup = getStravaAuthSessionForPoll(state, pollToken);
+  if (lookup.kind === 'expired') {
+    response.status(200).json({
+      status: 'expired',
+      message: 'Strava sign-in session expired. Please try again.',
+    });
+    return;
+  }
+  if (lookup.kind === 'unauthorized') {
+    response.status(403).json({ message: 'Invalid Strava sign-in poll token.' });
+    return;
+  }
+  const { session } = lookup;
+  if (session.status === 'completed' && session.exchangeCode) {
+    response.status(200).json({ status: 'completed', code: session.exchangeCode });
+    return;
+  }
+  if (session.status === 'cancelled' || session.status === 'error') {
+    response.status(200).json({
+      status: session.status,
+      message: session.errorMessage || 'Strava sign-in failed.',
+    });
+    return;
+  }
+  response.status(200).json({ status: 'pending' });
+});
+
+app.post('/auth/strava/cancel', (request, response) => {
+  const body: unknown = request.body;
+  if (
+    !isRecord(body) ||
+    typeof body.state !== 'string' ||
+    body.state.trim().length === 0 ||
+    typeof body.pollToken !== 'string' ||
+    body.pollToken.trim().length === 0
+  ) {
+    response.status(400).json({
+      message: 'Strava sign-in state and pollToken are required.',
+    });
+    return;
+  }
+  const result = cancelStravaAuthSession(
+    body.state.trim(),
+    body.pollToken.trim(),
+  );
+  if (result.kind === 'expired') {
+    response.status(200).json({ status: 'expired', cancelled: false });
+    return;
+  }
+  if (result.kind === 'unauthorized') {
+    response.status(403).json({ message: 'Invalid Strava sign-in poll token.' });
+    return;
+  }
+  response.status(200).json({
+    status: result.status,
+    cancelled: result.cancelled,
+  });
+});
+
 app.get('/auth/me', async (request, response) => {
   const userId = authenticateRequest(request, response);
 
@@ -573,11 +782,12 @@ app.patch('/auth/profile', async (request, response) => {
 
     const isChangingUsername =
       nextUsername !== undefined && nextUsername !== user.username;
-    const isLocalAccount = user.authProvider !== 'steam';
+    const isLocalAccount = user.authProvider === 'local';
 
     if (hasNewPassword && (!isLocalAccount || !user.password)) {
+      const provider = user.authProvider === 'strava' ? 'Strava' : 'Steam';
       response.status(400).json({
-        message: 'Password changes are not available for Steam Sign-In accounts.',
+        message: `Password changes are not available for ${provider} Sign-In accounts.`,
       });
       return;
     }
@@ -720,13 +930,13 @@ app.get('/auth/ratings', async (request, response) => {
     ];
     const raterUsers = raterIds.length
       ? await User.find({ _id: { $in: raterIds } })
-          .select('name username steamUsername')
+          .select('name username steamUsername stravaUsername')
           .lean()
       : [];
     const raterMap = new Map(
       raterUsers.map((rater) => [
         String(rater._id),
-        rater.name || rater.steamUsername || rater.username,
+        rater.name || rater.steamUsername || rater.stravaUsername || rater.username,
       ]),
     );
 
@@ -2086,6 +2296,8 @@ type SerializedUser = {
   authProvider: AuthProvider;
   steamUsername: string | null;
   steamAvatar: string | null;
+  stravaUsername: string | null;
+  stravaAvatar: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   crispinessRating: number | null;
@@ -2125,6 +2337,8 @@ function serializeUser(user: {
   authProvider?: AuthProvider;
   steamUsername?: string | null;
   steamAvatar?: string | null;
+  stravaUsername?: string | null;
+  stravaAvatar?: string | null;
   activeMode?: AppMode;
   offeredServices?: DapService[];
   crispinessRatingTotal?: number;
@@ -2138,9 +2352,16 @@ function serializeUser(user: {
     id: user.id,
     username: user.username,
     name: user.name ?? null,
-    authProvider: user.authProvider === 'steam' ? 'steam' : 'local',
+    authProvider:
+      user.authProvider === 'strava'
+        ? 'strava'
+        : user.authProvider === 'steam'
+          ? 'steam'
+          : 'local',
     steamUsername: user.steamUsername ?? null,
     steamAvatar: user.steamAvatar ?? null,
+    stravaUsername: user.stravaUsername ?? null,
+    stravaAvatar: user.stravaAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
     offeredServices: (user.offeredServices ?? []).filter(isDapService),
     crispinessRating:
@@ -2386,6 +2607,59 @@ function resolveSteamRedirectUri(
   return canonicalUrl.toString();
 }
 
+function resolveStravaRedirectUri(request: Request): string {
+  const configured = process.env.STRAVA_REDIRECT_URI?.trim();
+  if (configured) {
+    const parsed = isValidHttpUrl(configured);
+    if (!parsed) {
+      throw new StravaAuthConfigError(
+        'STRAVA_REDIRECT_URI must be a valid http(s) URL.',
+      );
+    }
+    if (
+      parsed.pathname !== '/auth/strava/callback' ||
+      parsed.search.length > 0 ||
+      parsed.hash.length > 0
+    ) {
+      throw new StravaAuthConfigError(
+        'STRAVA_REDIRECT_URI must use the /auth/strava/callback path without query or fragment.',
+      );
+    }
+    return parsed.toString();
+  }
+
+  const publicBackendUrl = process.env.PUBLIC_BACKEND_URL?.trim();
+  if (publicBackendUrl) {
+    const parsedPublic = isValidHttpUrl(publicBackendUrl);
+    if (!parsedPublic) {
+      throw new StravaAuthConfigError(
+        'PUBLIC_BACKEND_URL must be a valid http(s) URL.',
+      );
+    }
+    return `${parsedPublic.toString().replace(/\/+$/, '')}/auth/strava/callback`;
+  }
+
+  const forwardedProto = request
+    .get('x-forwarded-proto')
+    ?.split(',')[0]
+    ?.trim();
+  const protocol = forwardedProto || request.protocol || 'http';
+  const host =
+    request.get('x-forwarded-host')?.split(',')[0]?.trim() ||
+    request.get('host') ||
+    `localhost:${port}`;
+  const callbackUrl = isValidHttpUrl(
+    `${protocol}://${host}/auth/strava/callback`,
+  );
+  if (!callbackUrl) {
+    throw new StravaAuthFlowError(
+      'Unable to resolve a valid Strava callback URL.',
+      400,
+    );
+  }
+  return callbackUrl.toString();
+}
+
 function resolveSafeReturnTo(rawReturnTo: string | null): string | null {
   if (!rawReturnTo) {
     return null;
@@ -2464,6 +2738,40 @@ function sendSteamCallbackError(
     );
 }
 
+function buildNativeStravaDeepLink(
+    returnTo: string | null,
+    params: Record<string, string>,
+): string {
+    const baseUrl =
+      returnTo && !isHttpUrl(returnTo) ? returnTo : 'uberdaps://auth/strava';
+    const target = new URL(baseUrl);
+    for (const [key, value] of Object.entries(params)) {
+      target.searchParams.set(key, value);
+    }
+    return target.toString();
+}
+
+function sendStravaCallbackError(
+    response: Response,
+    returnTo: string | null,
+    message: string,
+): void {
+    if (returnTo && isHttpUrl(returnTo)) {
+      const target = new URL(returnTo);
+      target.searchParams.set('strava_error', message);
+      response.redirect(302, target.toString());
+      return;
+    }
+
+    const deepLinkTarget = buildNativeStravaDeepLink(returnTo, {
+      strava_error: message,
+    });
+    response
+      .status(400)
+      .type('html')
+      .send(renderSteamCallbackHtml('Strava Sign-In Failed', message, deepLinkTarget));
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -2512,7 +2820,10 @@ function renderSteamCallbackHtml(
 </html>`;
 }
 
-function sanitizeBaseUsername(raw: string): string {
+function sanitizeBaseUsername(
+  raw: string,
+  fallbackUsername = 'steam_player',
+): string {
   const cleaned = raw
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '_')
@@ -2523,7 +2834,7 @@ function sanitizeBaseUsername(raw: string): string {
     return cleaned;
   }
 
-  return 'steam_player';
+  return fallbackUsername;
 }
 
 async function findOrCreateSteamUser(profile: SteamUserProfile) {
@@ -2590,6 +2901,80 @@ async function findOrCreateSteamUser(profile: SteamUserProfile) {
     steamId: profile.steamId,
     steamUsername: profile.steamUsername,
     steamAvatar: profile.steamAvatar,
+    activeMode: 'order',
+    hasCompletedOnboarding: false,
+  });
+}
+
+async function findOrCreateStravaUser(profile: StravaUserProfile) {
+  let user = await User.findOne({ stravaId: profile.stravaId });
+  if (user) {
+    let dirty = false;
+    if (user.authProvider !== 'strava') {
+      user.authProvider = 'strava';
+      dirty = true;
+    }
+    if (user.stravaUsername !== profile.stravaUsername) {
+      user.stravaUsername = profile.stravaUsername;
+      dirty = true;
+    }
+    if (profile.stravaAvatar && user.stravaAvatar !== profile.stravaAvatar) {
+      user.stravaAvatar = profile.stravaAvatar;
+      dirty = true;
+    }
+    if (!user.name && profile.name) {
+      user.name = profile.name;
+      dirty = true;
+    }
+    if (dirty) {
+      await user.save();
+    }
+    return user;
+  }
+
+  const baseUsername = sanitizeBaseUsername(
+    profile.stravaUsername,
+    'strava_athlete',
+  );
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const suffix =
+      attempt === 0 ? '' : attempt === 1 ? '_strava' : `_strava_${attempt}`;
+    const maxBaseLength = 40 - suffix.length;
+    const candidate = `${baseUsername.slice(0, maxBaseLength)}${suffix}`;
+    try {
+      return await User.create({
+        username: candidate,
+        name: profile.name,
+        authProvider: 'strava',
+        stravaId: profile.stravaId,
+        stravaUsername: profile.stravaUsername,
+        stravaAvatar: profile.stravaAvatar,
+        activeMode: 'order',
+        hasCompletedOnboarding: false,
+      });
+    } catch (error) {
+      if (isDuplicateUsernameError(error)) {
+        const existingByStravaId = await User.findOne({
+          stravaId: profile.stravaId,
+        });
+        if (existingByStravaId) {
+          return existingByStravaId;
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  const randomSuffix = `_${Date.now().toString(36)}`;
+  const fallbackUsername = `${baseUsername.slice(0, 40 - randomSuffix.length)}${randomSuffix}`;
+  return User.create({
+    username: fallbackUsername,
+    name: profile.name,
+    authProvider: 'strava',
+    stravaId: profile.stravaId,
+    stravaUsername: profile.stravaUsername,
+    stravaAvatar: profile.stravaAvatar,
     activeMode: 'order',
     hasCompletedOnboarding: false,
   });

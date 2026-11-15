@@ -14,12 +14,16 @@ import {
   ApiError,
   authenticate,
   cancelSteamSso,
+  cancelStravaSso,
   completeOnboarding,
   deleteAccount,
   exchangeSteamSsoCode,
+  exchangeStravaSsoCode,
   fetchCurrentUser,
   fetchSteamSsoStatus,
+  fetchStravaSsoStatus,
   startSteamSso,
+  startStravaSso,
   updateDapperPreferences,
   updateActiveMode,
   updateProfile,
@@ -30,6 +34,7 @@ import {
   type OnboardingChoice,
   type ProfileUpdatePayload,
   type SteamSsoStatusResponse,
+  type StravaSsoStatusResponse,
 } from './src/api/auth';
 import AuthFlowScreen, {
   HACKATHON_SUGGESTED_PW,
@@ -55,6 +60,7 @@ const PROVIDER_LABELS: Record<SocialProvider, string> = {
   spotify: 'Spotify',
   osu: 'OSU',
 };
+type SsoProvider = 'steam' | 'strava';
 
 const WEB_GLOBAL_CSS = `
   * {
@@ -77,52 +83,64 @@ const WEB_GLOBAL_CSS = `
   }
 `;
 
-function parseSteamCallbackUrl(rawUrl: string): {
+function parseSsoCallbackUrl(rawUrl: string): {
+  provider: SsoProvider | null;
   code: string | null;
   error: string | null;
 } {
   try {
     const parsed = new URL(rawUrl);
-    return {
-      code: parsed.searchParams.get('steam_code'),
-      error: parsed.searchParams.get('steam_error'),
-    };
+    for (const provider of ['steam', 'strava'] as const) {
+      const code = parsed.searchParams.get(`${provider}_code`);
+      const error = parsed.searchParams.get(`${provider}_error`);
+      if (code !== null || error !== null) {
+        return { provider, code, error };
+      }
+    }
+    return { provider: null, code: null, error: null };
   } catch {
-    return { code: null, error: null };
+    return { provider: null, code: null, error: null };
   }
 }
 
-function consumeWebSteamCallbackParams(): {
+function consumeWebSsoCallbackParams(): {
+  provider: SsoProvider | null;
   code: string | null;
   error: string | null;
 } {
   if (Platform.OS !== 'web' || typeof window === 'undefined') {
-    return { code: null, error: null };
+    return { provider: null, code: null, error: null };
   }
 
   const url = new URL(window.location.href);
-  const code = url.searchParams.get('steam_code');
-  const error = url.searchParams.get('steam_error');
+  let callback = { provider: null as SsoProvider | null, code: null as string | null, error: null as string | null };
+  for (const provider of ['steam', 'strava'] as const) {
+    const code = url.searchParams.get(`${provider}_code`);
+    const error = url.searchParams.get(`${provider}_error`);
+    if (code !== null || error !== null) {
+      callback = { provider, code, error };
+      url.searchParams.delete(`${provider}_code`);
+      url.searchParams.delete(`${provider}_error`);
+    }
+  }
 
-  if (code !== null || error !== null) {
-    url.searchParams.delete('steam_code');
-    url.searchParams.delete('steam_error');
+  if (callback.provider) {
     const cleanUrl = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState({}, document.title, cleanUrl);
   }
 
-  return { code, error };
+  return callback;
 }
 
 export default function App() {
-  const [initialSteamCallback] = useState(consumeWebSteamCallbackParams);
+  const [initialSsoCallback] = useState(consumeWebSsoCallbackParams);
   const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<SignedInUser | null>(null);
-  const [error, setError] = useState<string | null>(initialSteamCallback.error);
+  const [error, setError] = useState<string | null>(initialSsoCallback.error);
   const [isRestoringSession, setIsRestoringSession] = useState(() =>
-    Boolean(initialSteamCallback.code || loadAuthToken() || Platform.OS !== 'web'),
+    Boolean(initialSsoCallback.code || loadAuthToken() || Platform.OS !== 'web'),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingProvider, setPendingProvider] =
@@ -132,35 +150,43 @@ export default function App() {
   const [onboardingAction, setOnboardingAction] =
     useState<OnboardingAction | null>(null);
   const modeChangeInProgressRef = useRef(false);
-  const steamPollActiveRef = useRef(false);
-  const activeSteamSessionRef = useRef<{
+  const ssoPollActiveRef = useRef(false);
+  const activeSsoSessionRef = useRef<{
+    provider: SsoProvider;
     state: string;
     pollToken: string;
   } | null>(null);
-  const isExchangingSteamCodeRef = useRef(false);
-  const handledSteamCodesRef = useRef<Set<string>>(new Set());
-  const steamAttemptIdRef = useRef(0);
+  const isExchangingSsoCodeRef = useRef(false);
+  const handledSsoCodesRef = useRef<Set<string>>(new Set());
+  const ssoAttemptIdRef = useRef(0);
   const isMountedRef = useRef(true);
 
   const isLogin = mode === 'login';
 
-  async function completeSteamSignInWithCode(code: string): Promise<void> {
+  async function completeSsoSignInWithCode(
+    provider: SsoProvider,
+    code: string,
+  ): Promise<void> {
+    const handledCode = `${provider}:${code}`;
     if (
       !code ||
-      handledSteamCodesRef.current.has(code) ||
-      isExchangingSteamCodeRef.current
+      handledSsoCodesRef.current.has(handledCode) ||
+      isExchangingSsoCodeRef.current
     ) {
       return;
     }
 
-    handledSteamCodesRef.current.add(code);
-    steamAttemptIdRef.current += 1;
-    isExchangingSteamCodeRef.current = true;
-    steamPollActiveRef.current = false;
-    activeSteamSessionRef.current = null;
+    handledSsoCodesRef.current.add(handledCode);
+    ssoAttemptIdRef.current += 1;
+    isExchangingSsoCodeRef.current = true;
+    ssoPollActiveRef.current = false;
+    activeSsoSessionRef.current = null;
 
     try {
-      const result = await exchangeSteamSsoCode(code);
+      const result =
+        provider === 'steam'
+          ? await exchangeSteamSsoCode(code)
+          : await exchangeStravaSsoCode(code);
       saveAuthToken(result.token);
       if (isMountedRef.current) {
         setUser({ ...result.user, token: result.token });
@@ -171,11 +197,11 @@ export default function App() {
         setError(
           exchangeError instanceof Error
             ? exchangeError.message
-            : 'Unable to complete Steam Sign-In.',
+            : `Unable to complete ${PROVIDER_LABELS[provider]} Sign-In.`,
         );
       }
     } finally {
-      isExchangingSteamCodeRef.current = false;
+      isExchangingSsoCodeRef.current = false;
       if (isMountedRef.current) {
         setPendingProvider(null);
       }
@@ -187,28 +213,30 @@ export default function App() {
     let isActive = true;
 
     async function initializeSession() {
-      let steamCode = initialSteamCallback.code;
-      let steamCallbackError: string | null = null;
+      let callbackProvider = initialSsoCallback.provider;
+      let callbackCode = initialSsoCallback.code;
+      let callbackError: string | null = null;
 
-      if (!steamCode && Platform.OS !== 'web') {
+      if (!callbackCode && Platform.OS !== 'web') {
         try {
           const initialUrl = await Linking.getInitialURL();
           if (initialUrl) {
-            const parsed = parseSteamCallbackUrl(initialUrl);
-            steamCode = parsed.code;
-            steamCallbackError = parsed.error;
+            const parsed = parseSsoCallbackUrl(initialUrl);
+            callbackProvider = parsed.provider;
+            callbackCode = parsed.code;
+            callbackError = parsed.error;
           }
         } catch {
           // Ignore Linking.getInitialURL failures on unsupported environments.
         }
       }
 
-      if (steamCallbackError && isActive) {
-        setError(steamCallbackError);
+      if (callbackError && isActive) {
+        setError(callbackError);
       }
 
-      if (steamCode) {
-        await completeSteamSignInWithCode(steamCode);
+      if (callbackProvider && callbackCode) {
+        await completeSsoSignInWithCode(callbackProvider, callbackCode);
         if (isActive) {
           setIsRestoringSession(false);
         }
@@ -251,9 +279,9 @@ export default function App() {
     return () => {
       isActive = false;
       isMountedRef.current = false;
-      steamPollActiveRef.current = false;
+      ssoPollActiveRef.current = false;
     };
-  }, [initialSteamCallback.code]);
+  }, [initialSsoCallback.code, initialSsoCallback.provider]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -261,17 +289,17 @@ export default function App() {
     }
 
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      const { code, error: callbackError } = parseSteamCallbackUrl(url);
+      const { provider, code, error: callbackError } = parseSsoCallbackUrl(url);
 
-      if (code) {
-        void completeSteamSignInWithCode(code);
+      if (provider && code) {
+        void completeSsoSignInWithCode(provider, code);
         return;
       }
 
       if (callbackError) {
-        steamAttemptIdRef.current += 1;
-        steamPollActiveRef.current = false;
-        activeSteamSessionRef.current = null;
+        ssoAttemptIdRef.current += 1;
+        ssoPollActiveRef.current = false;
+        activeSsoSessionRef.current = null;
         setPendingProvider(null);
         setError(callbackError);
       }
@@ -283,8 +311,8 @@ export default function App() {
   }, []);
 
   function signOut(nextError: string | null = null) {
-    steamPollActiveRef.current = false;
-    activeSteamSessionRef.current = null;
+    ssoPollActiveRef.current = false;
+    activeSsoSessionRef.current = null;
     clearAuthToken();
     setUser(null);
     setPendingProvider(null);
@@ -292,50 +320,55 @@ export default function App() {
     setError(nextError);
   }
 
-  async function handleCancelSteamSso() {
-    steamAttemptIdRef.current += 1;
-    steamPollActiveRef.current = false;
-    const activeSession = activeSteamSessionRef.current;
-    activeSteamSessionRef.current = null;
+  async function handleCancelSso() {
+    ssoAttemptIdRef.current += 1;
+    ssoPollActiveRef.current = false;
+    const activeSession = activeSsoSessionRef.current;
+    activeSsoSessionRef.current = null;
     setPendingProvider(null);
     setError(null);
 
     if (activeSession) {
-      await cancelSteamSso(activeSession.state, activeSession.pollToken).catch(
-        () => {},
-      );
+      const cancelSso =
+        activeSession.provider === 'steam' ? cancelSteamSso : cancelStravaSso;
+      await cancelSso(activeSession.state, activeSession.pollToken).catch(() => {});
     }
   }
 
   async function handleProviderPress(provider: SocialProvider) {
-    if (provider !== 'steam') {
+    if (provider !== 'steam' && provider !== 'strava') {
       setError(
         `${PROVIDER_LABELS[provider]} sign-in is coming soon. Please use Steam or Log in / Sign up.`,
       );
       return;
     }
 
-    const attemptId = ++steamAttemptIdRef.current;
+    const ssoProvider = provider;
+    const attemptId = ++ssoAttemptIdRef.current;
     const isCurrentAttempt = () =>
-      isMountedRef.current && steamAttemptIdRef.current === attemptId;
+      isMountedRef.current && ssoAttemptIdRef.current === attemptId;
     let startedSession: { state: string; pollToken: string } | null = null;
     setError(null);
-    setPendingProvider('steam');
+    setPendingProvider(ssoProvider);
 
     try {
       const returnTo =
         Platform.OS === 'web' && typeof window !== 'undefined'
           ? `${window.location.origin}${window.location.pathname}`
-          : 'uberdaps://auth/steam';
+          : `uberdaps://auth/${ssoProvider}`;
 
-      const { authorizeUrl, state, pollToken } = await startSteamSso(returnTo);
+      const startSso =
+        ssoProvider === 'steam' ? startSteamSso : startStravaSso;
+      const { authorizeUrl, state, pollToken } = await startSso(returnTo);
       if (!isCurrentAttempt()) {
-        void cancelSteamSso(state, pollToken).catch(() => {});
+        const cancelSso =
+          ssoProvider === 'steam' ? cancelSteamSso : cancelStravaSso;
+        void cancelSso(state, pollToken).catch(() => {});
         return;
       }
 
       startedSession = { state, pollToken };
-      activeSteamSessionRef.current = startedSession;
+      activeSsoSessionRef.current = { ...startedSession, provider: ssoProvider };
 
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.location.assign(authorizeUrl);
@@ -346,26 +379,29 @@ export default function App() {
       if (!isCurrentAttempt()) {
         return;
       }
-      steamPollActiveRef.current = true;
+      ssoPollActiveRef.current = true;
 
       const deadline = Date.now() + 3 * 60 * 1000;
       let consecutivePollErrors = 0;
       while (
-        steamPollActiveRef.current &&
+        ssoPollActiveRef.current &&
         isCurrentAttempt() &&
         Date.now() < deadline
       ) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        if (!steamPollActiveRef.current || !isCurrentAttempt()) {
+        if (!ssoPollActiveRef.current || !isCurrentAttempt()) {
           return;
         }
 
-        let status: SteamSsoStatusResponse;
+        let status: SteamSsoStatusResponse | StravaSsoStatusResponse;
         try {
-          status = await fetchSteamSsoStatus(state, pollToken);
+          status =
+            ssoProvider === 'steam'
+              ? await fetchSteamSsoStatus(state, pollToken)
+              : await fetchStravaSsoStatus(state, pollToken);
           consecutivePollErrors = 0;
         } catch (pollError) {
-          if (!steamPollActiveRef.current || !isCurrentAttempt()) {
+          if (!ssoPollActiveRef.current || !isCurrentAttempt()) {
             return;
           }
           if (
@@ -382,12 +418,12 @@ export default function App() {
           continue;
         }
 
-        if (!steamPollActiveRef.current || !isCurrentAttempt()) {
+        if (!ssoPollActiveRef.current || !isCurrentAttempt()) {
           return;
         }
 
         if (status.status === 'completed') {
-          await completeSteamSignInWithCode(status.code);
+          await completeSsoSignInWithCode(ssoProvider, status.code);
           return;
         }
 
@@ -396,38 +432,39 @@ export default function App() {
           status.status === 'expired' ||
           status.status === 'cancelled'
         ) {
-          activeSteamSessionRef.current = null;
+          activeSsoSessionRef.current = null;
           setError(status.message);
           setPendingProvider(null);
-          steamPollActiveRef.current = false;
+          ssoPollActiveRef.current = false;
           return;
         }
       }
 
-      if (steamPollActiveRef.current && isCurrentAttempt()) {
-        steamPollActiveRef.current = false;
-        activeSteamSessionRef.current = null;
-        setError('Steam sign-in timed out. Please try again.');
+      if (ssoPollActiveRef.current && isCurrentAttempt()) {
+        ssoPollActiveRef.current = false;
+        activeSsoSessionRef.current = null;
+        setError(`${PROVIDER_LABELS[ssoProvider]} sign-in timed out. Please try again.`);
         setPendingProvider(null);
-        await cancelSteamSso(state, pollToken).catch(() => {});
+        const cancelSso =
+          ssoProvider === 'steam' ? cancelSteamSso : cancelStravaSso;
+        await cancelSso(state, pollToken).catch(() => {});
       }
     } catch (ssoError) {
       if (!isCurrentAttempt()) {
         return;
       }
-      steamPollActiveRef.current = false;
-      activeSteamSessionRef.current = null;
+      ssoPollActiveRef.current = false;
+      activeSsoSessionRef.current = null;
       setPendingProvider(null);
       setError(
         ssoError instanceof Error
           ? ssoError.message
-          : 'Unable to start Steam Sign-In.',
+          : `Unable to start ${PROVIDER_LABELS[ssoProvider]} Sign-In.`,
       );
       if (startedSession) {
-        void cancelSteamSso(
-          startedSession.state,
-          startedSession.pollToken,
-        ).catch(() => {});
+        const cancelSso =
+          ssoProvider === 'steam' ? cancelSteamSso : cancelStravaSso;
+        void cancelSso(startedSession.state, startedSession.pollToken).catch(() => {});
       }
     }
   }
@@ -698,6 +735,8 @@ export default function App() {
             onUpdateProfile={handleUpdateProfile}
             steamAvatar={user.steamAvatar}
             steamUsername={user.steamUsername}
+            stravaAvatar={user.stravaAvatar}
+            stravaUsername={user.stravaUsername}
             token={user.token}
             username={user.username}
           />
@@ -714,7 +753,7 @@ export default function App() {
         <AuthFlowScreen
           error={error}
           isSubmitting={isSubmitting}
-          onCancelProvider={() => void handleCancelSteamSso()}
+          onCancelProvider={() => void handleCancelSso()}
           onClearError={() => setError(null)}
           onPressProvider={(provider) => void handleProviderPress(provider)}
           onSubmit={(nextMode, nextUser, nextPass) => {

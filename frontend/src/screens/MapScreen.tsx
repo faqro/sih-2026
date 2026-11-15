@@ -110,6 +110,8 @@ type MapScreenProps = {
   crispinessRatingCount?: number;
   steamAvatar?: string | null;
   steamUsername?: string | null;
+  stravaAvatar?: string | null;
+  stravaUsername?: string | null;
   error: string | null;
   isChangingMode: boolean;
   isSavingPreferences: boolean;
@@ -151,6 +153,8 @@ export default function MapScreen({
   crispinessRatingCount = 0,
   steamAvatar = null,
   steamUsername = null,
+  stravaAvatar = null,
+  stravaUsername = null,
   error,
   isChangingMode,
   isSavingPreferences,
@@ -372,7 +376,7 @@ export default function MapScreen({
 
   useEffect(() => {
     setAvatarLoadFailed(false);
-  }, [steamAvatar]);
+  }, [steamAvatar, stravaAvatar]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -785,7 +789,7 @@ export default function MapScreen({
       }
     }
 
-    if (isUsernameChanged && authProvider !== 'steam' && !currentPassword) {
+    if (isUsernameChanged && authProvider === 'local' && !currentPassword) {
       setProfileError('Enter your current password to change your username.');
       return;
     }
@@ -1172,26 +1176,28 @@ export default function MapScreen({
             </Pressable>
             {isMenuOpen ? (
               <View style={styles.menu}>
-                {name || steamUsername || username ? (
+                {name || steamUsername || stravaUsername || username ? (
                   <View style={styles.menuAccountHeader}>
-                    {steamAvatar && !avatarLoadFailed ? (
+                    {(steamAvatar || stravaAvatar) && !avatarLoadFailed ? (
                       <Image
                         onError={() => setAvatarLoadFailed(true)}
-                        source={{ uri: steamAvatar }}
+                        source={{ uri: steamAvatar || stravaAvatar || undefined }}
                         style={styles.menuAvatar}
                       />
                     ) : null}
                     <View style={styles.menuAccountText}>
                       <Text numberOfLines={1} style={styles.menuUsername}>
-                        {name || steamUsername || username}
+                        {name || steamUsername || stravaUsername || username}
                       </Text>
                       {name && username ? (
                         <Text numberOfLines={1} style={styles.menuSubUsername}>
                           @{username}
                         </Text>
                       ) : null}
-                      {authProvider === 'steam' ? (
-                        <Text style={styles.menuProviderBadge}>Steam</Text>
+                      {authProvider !== 'local' ? (
+                        <Text style={styles.menuProviderBadge}>
+                          {authProvider === 'strava' ? 'Strava' : 'Steam'}
+                        </Text>
                       ) : null}
                       {isDapperMode || crispinessRatingCount > 0 ? (
                         <Text style={styles.menuRatingBadge}>
@@ -1749,8 +1755,8 @@ export default function MapScreen({
                   <Text style={styles.sectionTitle}>Account & Security</Text>
                   <View style={styles.securityBadge}>
                     <Text style={styles.securityBadgeText}>
-                      {authProvider === 'steam'
-                        ? 'Steam SSO'
+                      {authProvider !== 'local'
+                        ? `${authProvider === 'strava' ? 'Strava' : 'Steam'} SSO`
                         : 'Encrypted Auth'}
                     </Text>
                   </View>
@@ -1788,9 +1794,9 @@ export default function MapScreen({
                   value={profileUsername}
                 />
 
-                {authProvider === 'steam' ? (
+                {authProvider !== 'local' ? (
                   <Text style={styles.steamSecurityNote}>
-                    Signed in with Steam. Password changes are managed by Steam.
+                    Signed in with {authProvider === 'strava' ? 'Strava' : 'Steam'}. Password changes are managed by your provider.
                   </Text>
                 ) : (
                   <>
