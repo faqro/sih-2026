@@ -10,6 +10,29 @@ Node.js and Express API.
 
 The health endpoint is available at `GET /health`. Set `PORT` to change the default port of `3000`.
 
+## Authentication and MongoDB
+
+The API stores username-password accounts in MongoDB through Mongoose. Passwords
+are hashed before storage; the API never returns a password hash.
+
+Copy `.env.example` to `.env` and set:
+
+```dotenv
+MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@CLUSTER.mongodb.net/sih2026?retryWrites=true&w=majority
+JWT_SECRET=replace-with-a-long-random-secret
+FRONTEND_ORIGIN=http://localhost:8081
+PORT=3000
+```
+
+- `MONGODB_URI` is the MongoDB Atlas (or local MongoDB) connection string.
+- `JWT_SECRET` must be a long, unique random value.
+- `FRONTEND_ORIGIN` is the URL allowed to call the API. Set it to the deployed
+  Cloudflare Pages URL in production.
+
+The available endpoints are `POST /auth/signup` and `POST /auth/login`. Both
+accept JSON with `username` and `password`, and return a user object and
+seven-day JSON Web Token on success.
+
 ## Fly.io deployment
 
 The GitHub Actions workflow deploys the backend when a commit is pushed to `main`.
