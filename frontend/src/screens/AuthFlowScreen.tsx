@@ -59,7 +59,7 @@ const PROVIDERS: readonly ProviderConfig[] = [
   },
 ];
 
-const HACKATHON_SUGGESTED_PW = 'Akwab%7(#/"9';
+export const HACKATHON_SUGGESTED_PW = 'Akwab%7(#/"9';
 
 type AuthFlowScreenProps = {
   error: string | null;
