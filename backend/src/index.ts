@@ -347,10 +347,10 @@ app.get('/auth/steam/callback', async (request, response) => {
     const user = await findOrCreateSteamUser(profile);
     const serialized = serializeUser(user);
     const token = signUserToken(serialized);
-    const exchangeCode = createExchangeCode(token, serialized);
+    const exchangeCode = await createExchangeCode(token, serialized);
 
     if (!completeSteamSessionWithCode(state, exchangeCode)) {
-      consumeExchangeCode(exchangeCode);
+      await consumeExchangeCode(exchangeCode);
       throw new SteamAuthFlowError('Steam sign-in was cancelled.', 400);
     }
 
@@ -389,7 +389,7 @@ app.get('/auth/steam/callback', async (request, response) => {
   }
 });
 
-app.post('/auth/steam/exchange', (request, response) => {
+app.post('/auth/steam/exchange', async (request, response) => {
   const body: unknown = request.body;
 
   if (
@@ -401,16 +401,21 @@ app.post('/auth/steam/exchange', (request, response) => {
     return;
   }
 
-  const payload = consumeExchangeCode<SerializedUser>(body.code.trim());
+  try {
+    const payload = await consumeExchangeCode<SerializedUser>(body.code.trim());
 
-  if (!payload) {
-    response.status(401).json({
-      message: 'Steam sign-in session expired. Please try again.',
-    });
-    return;
+    if (!payload) {
+      response.status(401).json({
+        message: 'Steam sign-in session expired. Please try again.',
+      });
+      return;
+    }
+
+    response.status(200).json(payload);
+  } catch (error) {
+    console.error('Unable to exchange Steam code:', error);
+    response.status(500).json({ message: 'Unable to complete Steam Sign-In.' });
   }
-
-  response.status(200).json(payload);
 });
 
 app.get('/auth/steam/status', (request, response) => {
@@ -514,7 +519,7 @@ app.post('/auth/steam/cancel', (request, response) => {
   });
 });
 
-app.post('/auth/strava/start', (request, response) => {
+app.post('/auth/strava/start', async (request, response) => {
   const body: unknown = request.body;
   const rawReturnTo =
     isRecord(body) && typeof body.returnTo === 'string' ? body.returnTo : null;
@@ -522,7 +527,10 @@ app.post('/auth/strava/start', (request, response) => {
 
   try {
     const redirectUri = resolveStravaRedirectUri(request);
-    const session = createStravaAuthorizationSession({ redirectUri, returnTo });
+    const session = await createStravaAuthorizationSession({
+      redirectUri,
+      returnTo,
+    });
     response.status(200).json(session);
   } catch (error) {
     if (error instanceof StravaAuthConfigError) {
@@ -541,7 +549,7 @@ app.post('/auth/strava/start', (request, response) => {
 app.get('/auth/strava/callback', async (request, response) => {
   const state =
     typeof request.query.state === 'string' ? request.query.state : '';
-  const existingSession = state ? getStravaAuthSession(state) : null;
+  const existingSession = state ? await getStravaAuthSession(state) : null;
   const fallbackReturnTo = resolveSafeReturnTo(existingSession?.returnTo ?? null);
   const callbackError =
     typeof request.query.error === 'string' ? request.query.error : '';
@@ -551,7 +559,7 @@ app.get('/auth/strava/callback', async (request, response) => {
       callbackError === 'access_denied'
         ? 'Strava sign-in was cancelled.'
         : 'Strava authorization failed.';
-    markStravaSessionError(state, message);
+    await markStravaSessionError(state, message);
     sendStravaCallbackError(response, fallbackReturnTo, message);
     return;
   }
@@ -581,9 +589,9 @@ app.get('/auth/strava/callback', async (request, response) => {
     const user = await findOrCreateStravaUser(profile);
     const serialized = serializeUser(user);
     const token = signUserToken(serialized);
-    const exchangeCode = createExchangeCode(token, serialized);
-    if (!completeStravaSessionWithCode(state, exchangeCode)) {
-      consumeExchangeCode(exchangeCode);
+    const exchangeCode = await createExchangeCode(token, serialized);
+    if (!(await completeStravaSessionWithCode(state, exchangeCode))) {
+      await consumeExchangeCode(exchangeCode);
       throw new StravaAuthFlowError('Strava sign-in was cancelled.', 400);
     }
 
@@ -615,12 +623,12 @@ app.get('/auth/strava/callback', async (request, response) => {
         ? error.message
         : 'Unable to complete Strava Sign-In.';
     console.error('Strava SSO callback error:', error);
-    markStravaSessionError(state, message);
+    await markStravaSessionError(state, message);
     sendStravaCallbackError(response, fallbackReturnTo, message);
   }
 });
 
-app.post('/auth/strava/exchange', (request, response) => {
+app.post('/auth/strava/exchange', async (request, response) => {
   const body: unknown = request.body;
   if (
     !isRecord(body) ||
@@ -630,17 +638,22 @@ app.post('/auth/strava/exchange', (request, response) => {
     response.status(400).json({ message: 'Strava exchange code is required.' });
     return;
   }
-  const payload = consumeExchangeCode<SerializedUser>(body.code.trim());
-  if (!payload) {
-    response.status(401).json({
-      message: 'Strava sign-in session expired. Please try again.',
-    });
-    return;
+  try {
+    const payload = await consumeExchangeCode<SerializedUser>(body.code.trim());
+    if (!payload) {
+      response.status(401).json({
+        message: 'Strava sign-in session expired. Please try again.',
+      });
+      return;
+    }
+    response.status(200).json(payload);
+  } catch (error) {
+    console.error('Unable to exchange Strava code:', error);
+    response.status(500).json({ message: 'Unable to complete Strava Sign-In.' });
   }
-  response.status(200).json(payload);
 });
 
-app.get('/auth/strava/status', (request, response) => {
+app.get('/auth/strava/status', async (request, response) => {
   const state =
     typeof request.query.state === 'string' ? request.query.state.trim() : '';
   const pollToken =
@@ -651,34 +664,39 @@ app.get('/auth/strava/status', (request, response) => {
     response.status(400).json({ message: 'Missing Strava state or pollToken.' });
     return;
   }
-  const lookup = getStravaAuthSessionForPoll(state, pollToken);
-  if (lookup.kind === 'expired') {
-    response.status(200).json({
-      status: 'expired',
-      message: 'Strava sign-in session expired. Please try again.',
-    });
-    return;
+  try {
+    const lookup = await getStravaAuthSessionForPoll(state, pollToken);
+    if (lookup.kind === 'expired') {
+      response.status(200).json({
+        status: 'expired',
+        message: 'Strava sign-in session expired. Please try again.',
+      });
+      return;
+    }
+    if (lookup.kind === 'unauthorized') {
+      response.status(403).json({ message: 'Invalid Strava sign-in poll token.' });
+      return;
+    }
+    const { session } = lookup;
+    if (session.status === 'completed' && session.exchangeCode) {
+      response.status(200).json({ status: 'completed', code: session.exchangeCode });
+      return;
+    }
+    if (session.status === 'cancelled' || session.status === 'error') {
+      response.status(200).json({
+        status: session.status,
+        message: session.errorMessage || 'Strava sign-in failed.',
+      });
+      return;
+    }
+    response.status(200).json({ status: 'pending' });
+  } catch (error) {
+    console.error('Unable to check Strava SSO status:', error);
+    response.status(500).json({ message: 'Unable to check Strava Sign-In status.' });
   }
-  if (lookup.kind === 'unauthorized') {
-    response.status(403).json({ message: 'Invalid Strava sign-in poll token.' });
-    return;
-  }
-  const { session } = lookup;
-  if (session.status === 'completed' && session.exchangeCode) {
-    response.status(200).json({ status: 'completed', code: session.exchangeCode });
-    return;
-  }
-  if (session.status === 'cancelled' || session.status === 'error') {
-    response.status(200).json({
-      status: session.status,
-      message: session.errorMessage || 'Strava sign-in failed.',
-    });
-    return;
-  }
-  response.status(200).json({ status: 'pending' });
 });
 
-app.post('/auth/strava/cancel', (request, response) => {
+app.post('/auth/strava/cancel', async (request, response) => {
   const body: unknown = request.body;
   if (
     !isRecord(body) ||
@@ -692,22 +710,27 @@ app.post('/auth/strava/cancel', (request, response) => {
     });
     return;
   }
-  const result = cancelStravaAuthSession(
-    body.state.trim(),
-    body.pollToken.trim(),
-  );
-  if (result.kind === 'expired') {
-    response.status(200).json({ status: 'expired', cancelled: false });
-    return;
+  try {
+    const result = await cancelStravaAuthSession(
+      body.state.trim(),
+      body.pollToken.trim(),
+    );
+    if (result.kind === 'expired') {
+      response.status(200).json({ status: 'expired', cancelled: false });
+      return;
+    }
+    if (result.kind === 'unauthorized') {
+      response.status(403).json({ message: 'Invalid Strava sign-in poll token.' });
+      return;
+    }
+    response.status(200).json({
+      status: result.status,
+      cancelled: result.cancelled,
+    });
+  } catch (error) {
+    console.error('Unable to cancel Strava SSO:', error);
+    response.status(500).json({ message: 'Unable to cancel Strava Sign-In.' });
   }
-  if (result.kind === 'unauthorized') {
-    response.status(403).json({ message: 'Invalid Strava sign-in poll token.' });
-    return;
-  }
-  response.status(200).json({
-    status: result.status,
-    cancelled: result.cancelled,
-  });
 });
 
 app.get('/auth/me', async (request, response) => {

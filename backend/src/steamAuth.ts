@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { OAuthExchange } from './models/OAuthStore.js';
 
 const STEAM_OPENID_ENDPOINT = 'https://steamcommunity.com/openid/login';
 const STEAM_OPENID_NS = 'http://specs.openid.net/auth/2.0';
@@ -9,7 +10,7 @@ const STEAM_PLAYER_SUMMARIES_URL =
 const DEFAULT_USER_AGENT = 'UberDaps/1.0 (https://uberdaps.app)';
 
 const SESSION_TTL_MS = 10 * 60 * 1000;
-const EXCHANGE_CODE_TTL_MS = 60 * 1000;
+const EXCHANGE_CODE_TTL_MS = 2 * 60 * 1000;
 const NONCE_TTL_MS = 15 * 60 * 1000;
 
 const REQUIRED_SIGNED_FIELDS = [
@@ -64,7 +65,6 @@ export type SteamExchangePayload<TUser> = {
 };
 
 const steamSessions = new Map<string, SteamSession>();
-const exchangeCodes = new Map<string, SteamExchangePayload<unknown>>();
 const usedNonces = new Map<string, number>();
 
 function toBase64Url(buffer: Buffer): string {
@@ -94,12 +94,6 @@ function cleanupExpiredEntries(): void {
   for (const [state, session] of steamSessions) {
     if (now - session.createdAt > SESSION_TTL_MS) {
       steamSessions.delete(state);
-    }
-  }
-
-  for (const [code, payload] of exchangeCodes) {
-    if (now - payload.createdAt > EXCHANGE_CODE_TTL_MS) {
-      exchangeCodes.delete(code);
     }
   }
 
@@ -246,30 +240,32 @@ export function completeSteamSessionWithCode(
   return true;
 }
 
-export function createExchangeCode<TUser>(
+export async function createExchangeCode<TUser>(
   token: string,
   user: TUser,
-): string {
-  cleanupExpiredEntries();
+): Promise<string> {
   const code = generateRandomToken(24);
-  exchangeCodes.set(code, {
+  await OAuthExchange.create({
+    code,
     token,
     user,
-    createdAt: Date.now(),
+    expiresAt: new Date(Date.now() + EXCHANGE_CODE_TTL_MS),
   });
   return code;
 }
 
-export function consumeExchangeCode<TUser>(
+export async function consumeExchangeCode<TUser>(
   code: string,
-): { token: string; user: TUser } | null {
-  cleanupExpiredEntries();
-  const payload = exchangeCodes.get(code);
+): Promise<{ token: string; user: TUser } | null> {
+  const payload = await OAuthExchange.findOneAndDelete({
+    code,
+    expiresAt: { $gt: new Date() },
+  }).lean();
+
   if (!payload) {
     return null;
   }
 
-  exchangeCodes.delete(code);
   return {
     token: payload.token,
     user: payload.user as TUser,

@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { OAuthSession } from './models/OAuthStore.js';
 
 const STRAVA_AUTHORIZE_URL = 'https://www.strava.com/oauth/authorize';
 const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
@@ -26,11 +27,10 @@ type StravaSession = {
   pollToken: string;
   redirectUri: string;
   returnTo: string | null;
-  createdAt: number;
   status: 'pending' | 'completed' | 'error' | 'cancelled';
   inFlight: boolean;
-  exchangeCode?: string;
-  errorMessage?: string;
+  exchangeCode?: string | null;
+  errorMessage?: string | null;
 };
 
 export type StravaUserProfile = {
@@ -39,8 +39,6 @@ export type StravaUserProfile = {
   stravaAvatar: string | null;
   name: string | null;
 };
-
-const sessions = new Map<string, StravaSession>();
 
 function generateToken(byteLength = 24): string {
   return randomBytes(byteLength).toString('base64url');
@@ -55,20 +53,10 @@ function constantTimeTokenMatch(expected: string, actual: string): boolean {
   );
 }
 
-function cleanupExpiredEntries(): void {
-  const now = Date.now();
-  for (const [state, session] of sessions) {
-    if (now - session.createdAt > SESSION_TTL_MS) {
-      sessions.delete(state);
-    }
-  }
-}
-
-export function createStravaAuthorizationSession(options: {
+export async function createStravaAuthorizationSession(options: {
   redirectUri: string;
   returnTo: string | null;
-}): { authorizeUrl: string; state: string; pollToken: string } {
-  cleanupExpiredEntries();
+}): Promise<{ authorizeUrl: string; state: string; pollToken: string }> {
   const clientId = process.env.STRAVA_CLIENT_ID?.trim();
   if (!clientId) {
     throw new StravaAuthConfigError('STRAVA_CLIENT_ID is not configured.');
@@ -76,14 +64,15 @@ export function createStravaAuthorizationSession(options: {
 
   const state = generateToken();
   const pollToken = generateToken();
-  sessions.set(state, {
+  await OAuthSession.create({
     state,
+    provider: 'strava',
     pollToken,
     redirectUri: options.redirectUri,
     returnTo: options.returnTo,
-    createdAt: Date.now(),
     status: 'pending',
     inFlight: false,
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS),
   });
 
   const authorizeUrl = new URL(STRAVA_AUTHORIZE_URL);
@@ -97,20 +86,25 @@ export function createStravaAuthorizationSession(options: {
   return { authorizeUrl: authorizeUrl.toString(), state, pollToken };
 }
 
-export function getStravaAuthSession(state: string): StravaSession | null {
-  cleanupExpiredEntries();
-  return sessions.get(state) ?? null;
+export async function getStravaAuthSession(
+  state: string,
+): Promise<StravaSession | null> {
+  return OAuthSession.findOne({
+    state,
+    provider: 'strava',
+    expiresAt: { $gt: new Date() },
+  }).lean();
 }
 
-export function getStravaAuthSessionForPoll(
+export async function getStravaAuthSessionForPoll(
   state: string,
   pollToken: string,
-):
+): Promise<
   | { kind: 'expired' }
   | { kind: 'unauthorized' }
-  | { kind: 'ok'; session: StravaSession } {
-  cleanupExpiredEntries();
-  const session = sessions.get(state);
+  | { kind: 'ok'; session: StravaSession }
+> {
+  const session = await getStravaAuthSession(state);
   if (!session) {
     return { kind: 'expired' };
   }
@@ -120,22 +114,28 @@ export function getStravaAuthSessionForPoll(
   return { kind: 'ok', session };
 }
 
-export function cancelStravaAuthSession(
+export async function cancelStravaAuthSession(
   state: string,
   pollToken: string,
-):
+): Promise<
   | { kind: 'expired' }
   | { kind: 'unauthorized' }
-  | { kind: 'ok'; cancelled: boolean; status: StravaSession['status'] } {
-  const lookup = getStravaAuthSessionForPoll(state, pollToken);
+  | { kind: 'ok'; cancelled: boolean; status: StravaSession['status'] }
+> {
+  const lookup = await getStravaAuthSessionForPoll(state, pollToken);
   if (lookup.kind !== 'ok') {
     return lookup;
   }
   const { session } = lookup;
   if (session.status === 'pending') {
-    session.status = 'cancelled';
-    session.errorMessage = 'Strava sign-in was cancelled.';
-    return { kind: 'ok', cancelled: true, status: session.status };
+    const updated = await OAuthSession.findOneAndUpdate(
+      { state, provider: 'strava', status: 'pending' },
+      { $set: { status: 'cancelled', errorMessage: 'Strava sign-in was cancelled.' } },
+      { new: true },
+    ).lean();
+    if (updated) {
+      return { kind: 'ok', cancelled: true, status: updated.status };
+    }
   }
   return {
     kind: 'ok',
@@ -144,34 +144,30 @@ export function cancelStravaAuthSession(
   };
 }
 
-export function markStravaSessionError(
+export async function markStravaSessionError(
   state: string,
   errorMessage: string,
-): StravaSession | null {
-  const session = sessions.get(state);
-  if (
-    !session ||
-    session.status === 'cancelled' ||
-    session.status === 'completed'
-  ) {
-    return session ?? null;
+): Promise<StravaSession | null> {
+  if (!state) {
+    return null;
   }
-  session.status = 'error';
-  session.errorMessage = errorMessage;
-  return session;
+  return OAuthSession.findOneAndUpdate(
+    { state, provider: 'strava', status: 'pending' },
+    { $set: { status: 'error', errorMessage } },
+    { new: true },
+  ).lean();
 }
 
-export function completeStravaSessionWithCode(
+export async function completeStravaSessionWithCode(
   state: string,
   exchangeCode: string,
-): boolean {
-  const session = sessions.get(state);
-  if (!session || session.status !== 'pending') {
-    return false;
-  }
-  session.status = 'completed';
-  session.exchangeCode = exchangeCode;
-  return true;
+): Promise<boolean> {
+  const updated = await OAuthSession.findOneAndUpdate(
+    { state, provider: 'strava', status: 'pending' },
+    { $set: { status: 'completed', exchangeCode } },
+    { new: true },
+  ).lean();
+  return updated !== null;
 }
 
 export async function verifyStravaOAuthCallback(options: {
@@ -179,24 +175,34 @@ export async function verifyStravaOAuthCallback(options: {
   code: string;
   scope: string;
 }): Promise<{ profile: StravaUserProfile; session: StravaSession }> {
-  cleanupExpiredEntries();
-  const session = sessions.get(options.state);
-  if (!session || session.status !== 'pending') {
+  const claimed = await OAuthSession.findOneAndUpdate(
+    {
+      state: options.state,
+      provider: 'strava',
+      status: 'pending',
+      inFlight: false,
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: { inFlight: true } },
+    { new: true },
+  ).lean();
+
+  if (!claimed) {
+    const existing = await getStravaAuthSession(options.state);
+    if (existing?.inFlight) {
+      throw new StravaAuthFlowError(
+        'Strava sign-in is already being processed.',
+        409,
+      );
+    }
     throw new StravaAuthFlowError(
-      session?.status === 'cancelled'
+      existing?.status === 'cancelled'
         ? 'Strava sign-in was cancelled.'
         : 'Strava sign-in session expired or is invalid. Please try again.',
       400,
     );
   }
-  if (session.inFlight) {
-    throw new StravaAuthFlowError(
-      'Strava sign-in is already being processed.',
-      409,
-    );
-  }
 
-  session.inFlight = true;
   try {
     if (!options.scope.split(',').map((scope) => scope.trim()).includes('read')) {
       throw new StravaAuthFlowError(
@@ -268,16 +274,20 @@ export async function verifyStravaOAuthCallback(options: {
     const stravaAvatar =
       readString(athlete.profile) || readString(athlete.profile_medium) || null;
 
-    if (session.status !== 'pending') {
+    const latest = await getStravaAuthSession(options.state);
+    if (!latest || latest.status !== 'pending') {
       throw new StravaAuthFlowError('Strava sign-in was cancelled.', 400);
     }
 
     return {
       profile: { stravaId, stravaUsername, stravaAvatar, name },
-      session,
+      session: latest,
     };
   } finally {
-    session.inFlight = false;
+    await OAuthSession.updateOne(
+      { state: options.state, provider: 'strava' },
+      { $set: { inFlight: false } },
+    ).catch(() => {});
   }
 }
 
