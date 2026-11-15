@@ -28,6 +28,7 @@ import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
   type OnboardingAction,
 } from './src/screens/OnboardingModeScreen';
+import WelcomeScreen from './src/screens/WelcomeScreen';
 import {
   clearAuthToken,
   loadAuthToken,
@@ -38,7 +39,10 @@ type SignedInUser = AuthUser & {
   token: string;
 };
 
+type UnauthenticatedView = 'welcome' | 'form';
+
 export default function App() {
+  const [authView, setAuthView] = useState<UnauthenticatedView>('welcome');
   const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -98,6 +102,7 @@ export default function App() {
     clearAuthToken();
     setUser(null);
     setOnboardingAction(null);
+    setAuthView('welcome');
     setError(nextError);
   }
 
@@ -133,6 +138,12 @@ export default function App() {
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
     setError(null);
+  }
+
+  function openAuthForm(nextMode: AuthMode) {
+    setMode(nextMode);
+    setError(null);
+    setAuthView('form');
   }
 
   async function handleOnboardingChoice(
@@ -196,6 +207,7 @@ export default function App() {
       await deleteAccount(user.token);
       clearAuthToken();
       setUser(null);
+      setAuthView('welcome');
       setMode('login');
       setUsername('');
       setPassword('');
@@ -258,6 +270,20 @@ export default function App() {
     );
   }
 
+  if (authView === 'welcome') {
+    return (
+      <View style={styles.page}>
+        <View style={[styles.app, styles.welcomeApp]}>
+          <StatusBar style="dark" />
+          <WelcomeScreen
+            onPressLogin={() => openAuthForm('login')}
+            onPressSignup={() => openAuthForm('signup')}
+          />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.page}>
       <SafeAreaView style={styles.app}>
@@ -267,6 +293,18 @@ export default function App() {
           style={styles.keyboardAvoider}
         >
           <View style={styles.content}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isSubmitting}
+              hitSlop={8}
+              onPress={() => {
+                setError(null);
+                setAuthView('welcome');
+              }}
+              style={styles.backButton}
+            >
+              <Text style={styles.backButtonText}>← Back</Text>
+            </Pressable>
             <View style={styles.brandMark}>
               <Image
                 accessibilityLabel="Uber DAPS logo"
@@ -367,6 +405,18 @@ const styles = StyleSheet.create({
     shadowRadius: 22,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
+  },
+  welcomeApp: {
+    backgroundColor: '#ffffff',
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    marginBottom: 18,
+  },
+  backButtonText: {
+    color: '#405bb6',
+    fontSize: 14,
+    fontWeight: '700',
   },
   loadingState: {
     flex: 1,
