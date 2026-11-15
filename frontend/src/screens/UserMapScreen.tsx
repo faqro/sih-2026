@@ -1,15 +1,20 @@
 import * as Location from 'expo-location';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Pressable,
   SafeAreaView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 
 import UserMapSurface from './UserMapSurface';
+
+const dapOptions = ['UberDap', 'UberDap Plus', 'UberDap Deluxe'] as const;
+type DapOption = (typeof dapOptions)[number];
 
 type UserMapScreenProps = {
   error: string | null;
@@ -34,6 +39,15 @@ export default function UserMapScreen({
   const [isLocating, setIsLocating] = useState(true);
   const [attempt, setAttempt] = useState(0);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
+  const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
+  const { height: viewportHeight } = useWindowDimensions();
+  const sheetHeight = viewportHeight / 2;
+  const sheetProgress = useRef(new Animated.Value(0)).current;
+  const sheetTranslateY = sheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [sheetHeight, 0],
+  });
 
   useEffect(() => {
     let isActive = true;
@@ -83,6 +97,29 @@ export default function UserMapScreen({
       isActive = false;
     };
   }, [attempt]);
+
+  function openRequestMenu() {
+    setIsMenuOpen(false);
+    setIsRequestMenuOpen(true);
+    sheetProgress.setValue(0);
+    Animated.timing(sheetProgress, {
+      toValue: 1,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closeRequestMenu() {
+    Animated.timing(sheetProgress, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setIsRequestMenuOpen(false);
+      }
+    });
+  }
 
   return (
     <View style={styles.container}>
@@ -152,10 +189,74 @@ export default function UserMapScreen({
         </View>
 
         <View style={styles.bottomActions}>
-          <Pressable accessibilityRole="button" style={styles.requestButton}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={openRequestMenu}
+            style={styles.requestButton}
+          >
             <Text style={styles.requestButtonText}>Request UberDap</Text>
           </Pressable>
         </View>
+
+        {isRequestMenuOpen ? (
+          <Animated.View
+            style={[
+              styles.requestSheet,
+              {
+                height: sheetHeight,
+                transform: [{ translateY: sheetTranslateY }],
+              },
+            ]}
+          >
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Choose your UberDap</Text>
+              <Pressable
+                accessibilityLabel="Close request menu"
+                accessibilityRole="button"
+                onPress={closeRequestMenu}
+                style={styles.sheetCloseButton}
+              >
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </Pressable>
+            </View>
+            <View style={styles.options}>
+              {dapOptions.map((option) => {
+                const isSelected = selectedDap === option;
+
+                return (
+                  <Pressable
+                    accessibilityLabel={option}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: isSelected }}
+                    key={option}
+                    onPress={() => setSelectedDap(option)}
+                    style={[
+                      styles.optionButton,
+                      isSelected && styles.optionButtonSelected,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.radio,
+                        isSelected && styles.radioSelected,
+                      ]}
+                    >
+                      {isSelected ? <View style={styles.radioDot} /> : null}
+                    </View>
+                    <Text
+                      style={[
+                        styles.optionText,
+                        isSelected && styles.optionTextSelected,
+                      ]}
+                    >
+                      {option}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Animated.View>
+        ) : null}
       </SafeAreaView>
     </View>
   );
@@ -303,5 +404,86 @@ const styles = StyleSheet.create({
     color: '#b42318',
     fontSize: 14,
     fontWeight: '700',
+  },
+  requestSheet: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1103,
+    elevation: 14,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    backgroundColor: '#ffffff',
+    shadowColor: '#172033',
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -5 },
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  sheetTitle: {
+    color: '#172033',
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  sheetCloseButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  sheetCloseText: {
+    color: '#526cc2',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  options: {
+    gap: 12,
+  },
+  optionButton: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#dce1ea',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#ffffff',
+  },
+  optionButtonSelected: {
+    borderColor: '#314b9a',
+    backgroundColor: '#f3f5fc',
+  },
+  radio: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#aab3c3',
+    borderRadius: 11,
+    marginRight: 13,
+  },
+  radioSelected: {
+    borderColor: '#314b9a',
+  },
+  radioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#314b9a',
+  },
+  optionText: {
+    color: '#34425c',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  optionTextSelected: {
+    color: '#314b9a',
   },
 });
