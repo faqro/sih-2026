@@ -468,6 +468,8 @@ export default function MapScreen({
 
   function selectMapMode(nextMode: AppMode) {
     if (nextMode === 'dapper' && offeredServices.length === 0) {
+      requestLocationRequestIdRef.current += 1;
+      setIsRequestingLocation(false);
       openPreferences();
       return;
     }
@@ -737,7 +739,7 @@ export default function MapScreen({
           ) : null}
           {isDapperMode && connectionError ? (
             <View style={styles.onlineBadge}>
-                    <Text style={styles.accountError}>{connectionError}</Text>
+              <Text style={styles.accountError}>{connectionError}</Text>
             </View>
           ) : null}
           <Pressable
