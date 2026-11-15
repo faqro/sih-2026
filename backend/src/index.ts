@@ -5,7 +5,7 @@ import express, { type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 
-import { User, type AccountType } from './models/User.js';
+import { User, type AppMode } from './models/User.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -30,9 +30,11 @@ app.post('/auth/signup', async (request, response) => {
     const user = await User.create({
       username: credentials.username,
       password: credentials.password,
+      activeMode: 'order',
+      hasCompletedOnboarding: false,
     });
 
-    sendAuthResponse(response, user.id, user.username, user.accountType);
+    sendAuthResponse(response, serializeUser(user));
   } catch (error) {
     if (isDuplicateUsernameError(error)) {
       response.status(409).json({ message: 'This username is already taken.' });
@@ -68,34 +70,140 @@ app.post('/auth/login', async (request, response) => {
       return;
     }
 
-    sendAuthResponse(response, user.id, user.username, user.accountType);
+    sendAuthResponse(response, serializeUser(user));
   } catch (error) {
     console.error('Unable to sign in:', error);
     response.status(500).json({ message: 'Unable to sign in.' });
   }
 });
 
-app.delete('/auth/account', async (request, response) => {
-  const authorization = request.headers.authorization;
+app.get('/auth/me', async (request, response) => {
+  const userId = authenticateRequest(request, response);
 
-  if (!authorization?.startsWith('Bearer ')) {
-    response.status(401).json({ message: 'Authentication is required.' });
+  if (!userId) {
     return;
   }
 
-  let userId: string;
-
   try {
-    const payload = jwt.verify(authorization.slice(7), jwtSecret);
+    const user = await User.findById(userId);
 
-    if (typeof payload !== 'object' || typeof payload.sub !== 'string') {
-      response.status(401).json({ message: 'Invalid authentication token.' });
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
       return;
     }
 
-    userId = payload.sub;
-  } catch {
-    response.status(401).json({ message: 'Invalid authentication token.' });
+    response.status(200).json({ user: serializeUser(user) });
+  } catch (error) {
+    console.error('Unable to load user profile:', error);
+    response.status(500).json({ message: 'Unable to load account.' });
+  }
+});
+
+app.patch('/auth/onboarding', async (request, response) => {
+  const userId = authenticateRequest(request, response);
+
+  if (!userId) {
+    return;
+  }
+
+  const body: unknown = request.body;
+
+  if (typeof body !== 'object' || body === null) {
+    response.status(400).json({ message: 'Invalid onboarding payload.' });
+    return;
+  }
+
+  const modeInput = 'mode' in body ? body.mode : undefined;
+  const hasMode = modeInput !== undefined;
+  const hasSkip = 'skip' in body && body.skip === true;
+
+  if (hasMode && !isAppMode(modeInput)) {
+    response.status(400).json({
+      message: "Mode must be 'order' or 'dapper'.",
+    });
+    return;
+  }
+
+  if (!hasMode && !hasSkip) {
+    response.status(400).json({
+      message: 'Provide a mode or set skip to true.',
+    });
+    return;
+  }
+
+  try {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
+      return;
+    }
+
+    if (isAppMode(modeInput)) {
+      user.activeMode = modeInput;
+    } else if (!user.hasCompletedOnboarding) {
+      // Preserve an existing mode if onboarding was already finished earlier.
+      user.activeMode = 'order';
+    }
+
+    user.hasCompletedOnboarding = true;
+    user.onboardingCompletedAt ??= new Date();
+
+    await user.save();
+
+    response.status(200).json({ user: serializeUser(user) });
+  } catch (error) {
+    console.error('Unable to complete onboarding:', error);
+    response.status(500).json({ message: 'Unable to save setup choice.' });
+  }
+});
+
+app.patch('/auth/mode', async (request, response) => {
+  const userId = authenticateRequest(request, response);
+
+  if (!userId) {
+    return;
+  }
+
+  const body: unknown = request.body;
+
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('mode' in body) ||
+    !isAppMode(body.mode)
+  ) {
+    response.status(400).json({
+      message: "Mode must be 'order' or 'dapper'.",
+    });
+    return;
+  }
+
+  try {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
+      return;
+    }
+
+    user.activeMode = body.mode;
+    user.hasCompletedOnboarding = true;
+    user.onboardingCompletedAt ??= new Date();
+
+    await user.save();
+
+    response.status(200).json({ user: serializeUser(user) });
+  } catch (error) {
+    console.error('Unable to update mode:', error);
+    response.status(500).json({ message: 'Unable to switch mode.' });
+  }
+});
+
+app.delete('/auth/account', async (request, response) => {
+  const userId = authenticateRequest(request, response);
+
+  if (!userId) {
     return;
   }
 
@@ -118,6 +226,61 @@ type Credentials = {
   username: string;
   password: string;
 };
+
+type SerializedUser = {
+  id: string;
+  username: string;
+  activeMode: AppMode;
+  hasCompletedOnboarding: boolean;
+};
+
+function authenticateRequest(
+  request: Request,
+  response: Response,
+): string | null {
+  const authorization = request.headers.authorization;
+
+  if (!authorization?.startsWith('Bearer ')) {
+    response.status(401).json({ message: 'Authentication is required.' });
+    return null;
+  }
+
+  try {
+    const payload = jwt.verify(authorization.slice(7), jwtSecret);
+
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      typeof payload.sub !== 'string'
+    ) {
+      response.status(401).json({ message: 'Invalid authentication token.' });
+      return null;
+    }
+
+    return payload.sub;
+  } catch {
+    response.status(401).json({ message: 'Invalid authentication token.' });
+    return null;
+  }
+}
+
+function serializeUser(user: {
+  id: string;
+  username: string;
+  activeMode?: AppMode;
+  hasCompletedOnboarding?: boolean;
+}): SerializedUser {
+  return {
+    id: user.id,
+    username: user.username,
+    activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
+    hasCompletedOnboarding: Boolean(user.hasCompletedOnboarding),
+  };
+}
+
+function isAppMode(value: unknown): value is AppMode {
+  return value === 'order' || value === 'dapper';
+}
 
 function requireEnvironmentVariable(name: string): string {
   const value = process.env[name];
@@ -167,20 +330,14 @@ function readCredentials(
   return { username, password };
 }
 
-function sendAuthResponse(
-  response: Response,
-  userId: string,
-  username: string,
-  accountType: AccountType,
-) {
-  const token = jwt.sign({ sub: userId, username }, jwtSecret, {
-    expiresIn: 60 * 60 * 24 * 7,
-  });
+function sendAuthResponse(response: Response, user: SerializedUser) {
+  const token = jwt.sign(
+    { sub: user.id, username: user.username },
+    jwtSecret,
+    { expiresIn: 60 * 60 * 24 * 7 },
+  );
 
-  response.status(200).json({
-    token,
-    user: { id: userId, username, accountType },
-  });
+  response.status(200).json({ token, user });
 }
 
 function isDuplicateUsernameError(error: unknown): boolean {

@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -14,17 +14,28 @@ import {
 } from 'react-native';
 
 import {
+  ApiError,
   authenticate,
+  completeOnboarding,
   deleteAccount,
-  type AccountType,
+  fetchCurrentUser,
+  updateActiveMode,
+  type AppMode,
   type AuthMode,
+  type AuthUser,
 } from './src/api/auth';
-import UserMapScreen from './src/screens/UserMapScreen';
+import MapScreen from './src/screens/MapScreen';
+import OnboardingModeScreen, {
+  type OnboardingAction,
+} from './src/screens/OnboardingModeScreen';
+import {
+  clearAuthToken,
+  loadAuthToken,
+  saveAuthToken,
+} from './src/storage/session';
 
-type SignedInUser = {
-  accountType: AccountType;
+type SignedInUser = AuthUser & {
   token: string;
-  username: string;
 };
 
 export default function App() {
@@ -33,9 +44,71 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<SignedInUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(() =>
+    Boolean(loadAuthToken()),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [onboardingAction, setOnboardingAction] =
+    useState<OnboardingAction | null>(null);
 
   const isLogin = mode === 'login';
+
+  useEffect(() => {
+    const storedToken = loadAuthToken();
+
+    if (!storedToken) {
+      setIsRestoringSession(false);
+      return;
+    }
+
+    let isActive = true;
+
+    async function restoreSession(token: string) {
+      try {
+        const result = await fetchCurrentUser(token);
+        if (isActive) {
+          setUser({ ...result.user, token });
+        }
+      } catch (restoreError) {
+        clearAuthToken();
+        if (
+          isActive &&
+          !(
+            restoreError instanceof ApiError &&
+            (restoreError.status === 401 || restoreError.status === 404)
+          )
+        ) {
+          setError('Session expired or backend unavailable. Please sign in again.');
+        }
+      } finally {
+        if (isActive) {
+          setIsRestoringSession(false);
+        }
+      }
+    }
+
+    void restoreSession(storedToken);
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  function signOut(nextError: string | null = null) {
+    clearAuthToken();
+    setUser(null);
+    setOnboardingAction(null);
+    setError(nextError);
+  }
+
+  function handleSessionError(err: unknown, fallbackMessage: string) {
+    if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+      signOut('Your session expired. Please sign in again.');
+      return;
+    }
+
+    setError(err instanceof Error ? err.message : fallbackMessage);
+  }
 
   async function submit() {
     setError(null);
@@ -43,6 +116,7 @@ export default function App() {
 
     try {
       const result = await authenticate(mode, username, password);
+      saveAuthToken(result.token);
       setUser({ ...result.user, token: result.token });
       setPassword('');
     } catch (submitError) {
@@ -61,6 +135,55 @@ export default function App() {
     setError(null);
   }
 
+  async function handleOnboardingChoice(
+    action: OnboardingAction,
+    choice: { mode: AppMode } | { skip: true },
+  ) {
+    if (!user) {
+      return;
+    }
+
+    setError(null);
+    setOnboardingAction(action);
+
+    try {
+      const result = await completeOnboarding(user.token, choice);
+      setUser((current) =>
+        current ? { ...result.user, token: current.token } : null,
+      );
+    } catch (onboardingError) {
+      handleSessionError(onboardingError, 'Unable to save your setup choice.');
+    } finally {
+      setOnboardingAction(null);
+    }
+  }
+
+  async function handleChangeMapMode(nextMode: AppMode) {
+    if (!user || user.activeMode === nextMode) {
+      return;
+    }
+
+    const previousMode = user.activeMode;
+    setError(null);
+    setUser((current) =>
+      current ? { ...current, activeMode: nextMode } : null,
+    );
+
+    try {
+      const result = await updateActiveMode(user.token, nextMode);
+      setUser((current) =>
+        current ? { ...result.user, token: current.token } : null,
+      );
+    } catch (switchError) {
+      setUser((current) =>
+        current && current.activeMode === nextMode
+          ? { ...current, activeMode: previousMode }
+          : current,
+      );
+      handleSessionError(switchError, 'Unable to switch map mode.');
+    }
+  }
+
   async function removeAccount() {
     if (!user) {
       return;
@@ -71,31 +194,45 @@ export default function App() {
 
     try {
       await deleteAccount(user.token);
+      clearAuthToken();
       setUser(null);
       setMode('login');
       setUsername('');
       setPassword('');
     } catch (deleteError) {
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : 'Unable to delete your account.',
-      );
+      handleSessionError(deleteError, 'Unable to delete your account.');
     } finally {
       setIsSubmitting(false);
     }
   }
 
-  if (user?.accountType === 'user') {
+  if (isRestoringSession) {
+    return (
+      <View style={styles.page}>
+        <SafeAreaView style={styles.app}>
+          <StatusBar style="dark" />
+          <View style={styles.loadingState}>
+            <ActivityIndicator color="#314b9a" size="large" />
+            <Text style={styles.loadingText}>Restoring your session...</Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  if (user && !user.hasCompletedOnboarding) {
     return (
       <View style={styles.page}>
         <View style={styles.app}>
           <StatusBar style="dark" />
-          <UserMapScreen
+          <OnboardingModeScreen
             error={error}
-            isSubmitting={isSubmitting}
-            onDeleteAccount={removeAccount}
-            onSignOut={() => setUser(null)}
+            pendingAction={onboardingAction}
+            onSelectMode={(selectedMode) =>
+              void handleOnboardingChoice(selectedMode, { mode: selectedMode })
+            }
+            onSignOut={() => signOut()}
+            onSkip={() => void handleOnboardingChoice('skip', { skip: true })}
           />
         </View>
       </View>
@@ -105,44 +242,17 @@ export default function App() {
   if (user) {
     return (
       <View style={styles.page}>
-        <SafeAreaView style={styles.app}>
+        <View style={styles.app}>
           <StatusBar style="dark" />
-          <View style={styles.signedInContent}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{user.username.charAt(0)}</Text>
-            </View>
-            <Text style={styles.eyebrow}>DAPPER ACCOUNT</Text>
-            <Text style={styles.welcomeTitle}>Dapper dashboard</Text>
-            <Text style={styles.welcomeDescription}>
-              Welcome, {user.username}. Dapper features are coming soon.
-            </Text>
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <Pressable
-              accessibilityRole="button"
-              disabled={isSubmitting}
-              onPress={() => setUser(null)}
-              style={[
-                styles.secondaryButton,
-                isSubmitting && styles.primaryButtonDisabled,
-              ]}
-            >
-              <Text style={styles.secondaryButtonText}>Sign out</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={isSubmitting}
-              onPress={removeAccount}
-              style={[
-                styles.dangerButton,
-                isSubmitting && styles.primaryButtonDisabled,
-              ]}
-            >
-              <Text style={styles.dangerButtonText}>
-                {isSubmitting ? 'Deleting account...' : 'Delete account'}
-              </Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
+          <MapScreen
+            activeMode={user.activeMode}
+            error={error}
+            isSubmitting={isSubmitting}
+            onChangeMode={(nextMode) => void handleChangeMapMode(nextMode)}
+            onDeleteAccount={() => void removeAccount()}
+            onSignOut={() => signOut()}
+          />
+        </View>
       </View>
     );
   }
@@ -204,7 +314,7 @@ export default function App() {
               <Pressable
                 accessibilityRole="button"
                 disabled={isSubmitting}
-                onPress={submit}
+                onPress={() => void submit()}
                 style={[
                   styles.primaryButton,
                   isSubmitting && styles.primaryButtonDisabled,
@@ -256,6 +366,17 @@ const styles = StyleSheet.create({
     shadowRadius: 22,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    color: '#6f7a90',
+    fontSize: 14,
+    fontWeight: '600',
   },
   keyboardAvoider: {
     flex: 1,
@@ -345,70 +466,6 @@ const styles = StyleSheet.create({
   },
   modeLink: {
     color: '#405bb6',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  signedInContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 30,
-  },
-  avatar: {
-    width: 76,
-    height: 76,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 38,
-    marginBottom: 23,
-    backgroundColor: '#dfe7ff',
-  },
-  avatarText: {
-    color: '#314b9a',
-    fontSize: 32,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  eyebrow: {
-    color: '#526cc2',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    marginBottom: 8,
-  },
-  welcomeTitle: {
-    color: '#172033',
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  welcomeDescription: {
-    color: '#6f7a90',
-    fontSize: 15,
-    marginBottom: 27,
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: '#cbd3e3',
-    borderRadius: 13,
-    paddingHorizontal: 22,
-    paddingVertical: 13,
-  },
-  secondaryButtonText: {
-    color: '#405bb6',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  dangerButton: {
-    borderWidth: 1,
-    borderColor: '#f0b8b5',
-    borderRadius: 13,
-    paddingHorizontal: 22,
-    paddingVertical: 13,
-    marginTop: 12,
-  },
-  dangerButtonText: {
-    color: '#b42318',
     fontSize: 14,
     fontWeight: '700',
   },

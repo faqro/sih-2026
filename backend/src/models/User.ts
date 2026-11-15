@@ -1,11 +1,13 @@
 import { model, Schema } from 'mongoose';
 
-export type AccountType = 'user' | 'dapper';
+export type AppMode = 'order' | 'dapper';
 
 type UserDocument = {
   username: string;
   password: string;
-  accountType: AccountType;
+  activeMode: AppMode;
+  hasCompletedOnboarding: boolean;
+  onboardingCompletedAt: Date | null;
 };
 
 const userSchema = new Schema<UserDocument>(
@@ -25,11 +27,20 @@ const userSchema = new Schema<UserDocument>(
       required: true,
       select: false,
     },
-    accountType: {
+    activeMode: {
       type: String,
-      enum: ['user', 'dapper'],
-      default: 'user',
+      enum: ['order', 'dapper'],
+      default: 'order',
       required: true,
+    },
+    hasCompletedOnboarding: {
+      type: Boolean,
+      default: false,
+      required: true,
+    },
+    onboardingCompletedAt: {
+      type: Date,
+      default: null,
     },
   },
   { timestamps: true },

@@ -4,15 +4,19 @@ import { StyleSheet } from 'react-native';
 
 import 'leaflet/dist/leaflet.css';
 
-type UserMapSurfaceProps = {
+import type { AppMode } from '../api/auth';
+
+export type MapSurfaceProps = {
   location: {
     latitude: number;
     longitude: number;
   };
+  mode: AppMode;
 };
 
-export default function UserMapSurface({ location }: UserMapSurfaceProps) {
+export default function MapSurface({ location, mode }: MapSurfaceProps) {
   const center: LatLngExpression = [location.latitude, location.longitude];
+  const markerFillColor = mode === 'dapper' ? '#314b9a' : '#000000';
 
   return (
     <MapContainer center={center} zoom={16} style={styles.map}>
@@ -24,7 +28,7 @@ export default function UserMapSurface({ location }: UserMapSurfaceProps) {
         center={center}
         pathOptions={{
           color: '#ffffff',
-          fillColor: '#000000',
+          fillColor: markerFillColor,
           fillOpacity: 1,
           weight: 5,
         }}

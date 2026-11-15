@@ -11,14 +11,17 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import UserMapSurface from './UserMapSurface';
+import type { AppMode } from '../api/auth';
+import MapSurface from './MapSurface';
 
 const dapOptions = ['UberDap', 'UberDap Plus', 'UberDap Deluxe'] as const;
 type DapOption = (typeof dapOptions)[number];
 
-type UserMapScreenProps = {
+type MapScreenProps = {
+  activeMode: AppMode;
   error: string | null;
   isSubmitting: boolean;
+  onChangeMode: (nextMode: AppMode) => void;
   onDeleteAccount: () => void;
   onSignOut: () => void;
 };
@@ -28,12 +31,19 @@ type Coordinates = {
   longitude: number;
 };
 
-export default function UserMapScreen({
+const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
+  { mode: 'order', label: 'Order a Dap' },
+  { mode: 'dapper', label: 'Dapper' },
+];
+
+export default function MapScreen({
+  activeMode,
   error,
   isSubmitting,
+  onChangeMode,
   onDeleteAccount,
   onSignOut,
-}: UserMapScreenProps) {
+}: MapScreenProps) {
   const [location, setLocation] = useState<Coordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(true);
@@ -123,9 +133,13 @@ export default function UserMapScreen({
 
   return (
     <View style={styles.container}>
-      {location ? <UserMapSurface location={location} /> : (
-        <View style={styles.mapPlaceholder} />
-      )}
+      <View style={styles.mapLayer}>
+        {location ? (
+          <MapSurface location={location} mode={activeMode} />
+        ) : (
+          <View style={styles.mapPlaceholder} />
+        )}
+      </View>
 
       {isLocating ? (
         <View style={styles.locationMessage}>
@@ -148,53 +162,87 @@ export default function UserMapScreen({
       ) : null}
 
       <SafeAreaView pointerEvents="box-none" style={styles.overlay}>
-        <View style={styles.topRight}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={isMenuOpen ? 'Close account menu' : 'Open account menu'}
-            accessibilityState={{ expanded: isMenuOpen }}
-            disabled={isSubmitting}
-            onPress={() => setIsMenuOpen((isOpen) => !isOpen)}
-            style={[styles.menuButton, isSubmitting && styles.disabledButton]}
-          >
-            <View style={styles.hamburgerIcon}>
-              <View style={styles.hamburgerLine} />
-              <View style={styles.hamburgerLine} />
-              <View style={styles.hamburgerLine} />
-            </View>
-          </Pressable>
-          {isMenuOpen ? (
-            <View style={styles.menu}>
-              {error ? <Text style={styles.accountError}>{error}</Text> : null}
-              <Pressable
-                accessibilityRole="button"
-                disabled={isSubmitting}
-                onPress={onSignOut}
-                style={styles.menuItem}
-              >
-                <Text style={styles.signOutText}>Sign out</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                disabled={isSubmitting}
-                onPress={onDeleteAccount}
-                style={[styles.menuItem, styles.deleteButton]}
-              >
-                <Text style={styles.deleteText}>
-                  {isSubmitting ? 'Deleting account...' : 'Delete account'}
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
+        <View pointerEvents="box-none" style={styles.topBar}>
+          <View style={styles.modeToggleCard}>
+            {MODE_TABS.map((tab) => {
+              const isSelected = activeMode === tab.mode;
+
+              return (
+                <Pressable
+                  key={tab.mode}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  onPress={() => onChangeMode(tab.mode)}
+                  style={[
+                    styles.modeTab,
+                    isSelected && styles.modeTabSelected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modeTabText,
+                      isSelected && styles.modeTabTextSelected,
+                    ]}
+                  >
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.topRight}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                isMenuOpen ? 'Close account menu' : 'Open account menu'
+              }
+              accessibilityState={{ expanded: isMenuOpen }}
+              disabled={isSubmitting}
+              onPress={() => setIsMenuOpen((isOpen) => !isOpen)}
+              style={[styles.menuButton, isSubmitting && styles.disabledButton]}
+            >
+              <View style={styles.hamburgerIcon}>
+                <View style={styles.hamburgerLine} />
+                <View style={styles.hamburgerLine} />
+                <View style={styles.hamburgerLine} />
+              </View>
+            </Pressable>
+            {isMenuOpen ? (
+              <View style={styles.menu}>
+                {error ? <Text style={styles.accountError}>{error}</Text> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSubmitting}
+                  onPress={onSignOut}
+                  style={styles.menuItem}
+                >
+                  <Text style={styles.signOutText}>Sign out</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSubmitting}
+                  onPress={onDeleteAccount}
+                  style={[styles.menuItem, styles.deleteButton]}
+                >
+                  <Text style={styles.deleteText}>
+                    {isSubmitting ? 'Deleting account...' : 'Delete account'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
         </View>
 
         <View style={styles.bottomActions}>
           <Pressable
             accessibilityRole="button"
-            onPress={openRequestMenu}
+            onPress={activeMode === 'order' ? openRequestMenu : undefined}
             style={styles.requestButton}
           >
-            <Text style={styles.requestButtonText}>Request UberDap</Text>
+            <Text style={styles.requestButtonText}>
+              {activeMode === 'dapper' ? 'Go Online' : 'Request UberDap'}
+            </Text>
           </Pressable>
         </View>
 
@@ -268,6 +316,9 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#e8edf5',
   },
+  mapLayer: {
+    ...StyleSheet.absoluteFill,
+  },
   mapPlaceholder: {
     ...StyleSheet.absoluteFill,
     backgroundColor: '#e8edf5',
@@ -275,7 +326,7 @@ const styles = StyleSheet.create({
   locationMessage: {
     position: 'absolute',
     top: '42%',
-    zIndex: 1101,
+    zIndex: 1200,
     alignSelf: 'center',
     maxWidth: '85%',
     alignItems: 'center',
@@ -311,13 +362,50 @@ const styles = StyleSheet.create({
     zIndex: 1100,
     elevation: 10,
   },
-  topRight: {
+  topBar: {
     position: 'absolute',
     top: 16,
     right: 16,
-    alignItems: 'flex-end',
+    left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     zIndex: 1102,
     elevation: 12,
+  },
+  modeToggleCard: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+    borderRadius: 16,
+    padding: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    shadowColor: '#172033',
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+  modeTab: {
+    flex: 1,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+  },
+  modeTabSelected: {
+    backgroundColor: '#314b9a',
+  },
+  modeTabText: {
+    color: '#6f7a90',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modeTabTextSelected: {
+    color: '#ffffff',
+  },
+  topRight: {
+    alignItems: 'flex-end',
   },
   menuButton: {
     width: 52,
@@ -342,8 +430,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#172033',
   },
   menu: {
+    position: 'absolute',
+    top: 60,
+    right: 0,
     width: 200,
-    marginTop: 10,
     borderRadius: 14,
     paddingVertical: 6,
     backgroundColor: '#ffffff',
