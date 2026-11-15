@@ -9,6 +9,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -32,32 +33,50 @@ const displayFontFamily = Platform.select({
   default: undefined,
 });
 
-const dapOptions = ['UberDap', 'UberDap Plus', 'UberDap Deluxe'] as const;
+const dapOptions = [
+  'Dap for Poor People',
+  'Dap (Standard)',
+  'Dap (Wheelchair-Accessible)',
+  'Dap & Dash',
+  'THE GOD DAP',
+] as const;
 type DapOption = (typeof dapOptions)[number];
 const dapOptionPrices: Record<DapOption, string> = {
-  UberDap: '$21.99',
-  'UberDap Plus': '$36.99',
-  'UberDap Deluxe': '$124.99',
+  'Dap for Poor People': '$0.03',
+  'Dap (Standard)': '$21.99',
+  'Dap (Wheelchair-Accessible)': '$24.99',
+  'Dap & Dash': '$16.99',
+  'THE GOD DAP': '$124.99',
 };
 
 const DAP_DETAILS: Record<
   DapOption,
   { tag: string; time: string; description: string }
 > = {
-  UberDap: {
+  'Dap for Poor People': {
+    tag: 'BUDGET',
+    time: '2 min',
+    description: 'A basic dap at the lowest price.',
+  },
+  'Dap (Standard)': {
     tag: 'CLASSIC',
     time: '2 min',
-    description: 'Crisp single-contact street snap.',
+    description: 'The classic single-contact dap.',
   },
-  'UberDap Plus': {
-    tag: 'POPULAR',
+  'Dap (Wheelchair-Accessible)': {
+    tag: 'ACCESSIBLE',
     time: '3 min',
-    description: 'Two-handed grip, slide & shoulder tap.',
+    description: 'A wheelchair-accessible dap meetup.',
   },
-  'UberDap Deluxe': {
-    tag: 'VIP PROTOCOL',
+  'Dap & Dash': {
+    tag: 'QUICK',
+    time: '1 min',
+    description: 'A quick dap with a fast exit.',
+  },
+  'THE GOD DAP': {
+    tag: 'PREMIUM',
     time: '5 min',
-    description: '5-step synchronized secret routine.',
+    description: 'The ultimate dap experience.',
   },
 };
 
@@ -128,9 +147,11 @@ export default function MapScreen({
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [pendingModeAfterPreferences, setPendingModeAfterPreferences] =
     useState<AppMode | null>(null);
-  const [selectedServices, setSelectedServices] =
-    useState<DapService[]>(offeredServices);
-  const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
+  const [selectedServices, setSelectedServices] = useState<DapService[]>(
+    () => availableDapperServices(offeredServices),
+  );
+  const [selectedDap, setSelectedDap] =
+    useState<DapOption>('Dap (Standard)');
   const [showMatchToast, setShowMatchToast] = useState(false);
   const [isDapperSheetOpen, setIsDapperSheetOpen] = useState(false);
   const [selectedCrispinessRating, setSelectedCrispinessRating] = useState<
@@ -476,7 +497,7 @@ export default function MapScreen({
   }
 
   useEffect(() => {
-    setSelectedServices(offeredServices);
+    setSelectedServices(availableDapperServices(offeredServices));
   }, [offeredServices]);
 
   useEffect(() => {
@@ -571,7 +592,7 @@ export default function MapScreen({
 
   function openPreferences() {
     setIsMenuOpen(false);
-    setSelectedServices(offeredServices);
+    setSelectedServices(availableDapperServices(offeredServices));
     setIsPreferencesOpen(true);
     preferencesProgress.setValue(0);
     Animated.timing(preferencesProgress, {
@@ -999,7 +1020,11 @@ export default function MapScreen({
                     {requestLocationError ?? dapRequest.error}
                   </Text>
                 ) : null}
-                <View style={styles.options}>
+                <ScrollView
+                  contentContainerStyle={styles.options}
+                  showsVerticalScrollIndicator={false}
+                  style={styles.optionListScroll}
+                >
                   {dapOptions.map((option) => {
                     const isSelected = selectedDap === option;
                     const details = DAP_DETAILS[option];
@@ -1061,7 +1086,7 @@ export default function MapScreen({
                       </Pressable>
                     );
                   })}
-                </View>
+                </ScrollView>
                 <Pressable
                   accessibilityRole="button"
                   disabled={isRequestingLocation || dapRequest.isRestoring}
@@ -1231,7 +1256,11 @@ export default function MapScreen({
             <Text style={styles.preferencesDescription}>
               Select at least one service you offer.
             </Text>
-            <View style={styles.options}>
+            <ScrollView
+              contentContainerStyle={styles.options}
+              showsVerticalScrollIndicator={false}
+              style={styles.optionListScroll}
+            >
               {dapOptions.map((service) => {
                 const isSelected = selectedServices.includes(service);
 
@@ -1270,7 +1299,7 @@ export default function MapScreen({
                   </Pressable>
                 );
               })}
-            </View>
+            </ScrollView>
             {error ? <Text style={styles.preferencesError}>{error}</Text> : null}
             <Pressable
               accessibilityRole="button"
@@ -1394,6 +1423,10 @@ export default function MapScreen({
 function formatCrispinessStars(rating: number): string {
   const roundedRating = Math.max(0, Math.min(5, Math.round(rating * 10) / 10));
   return `${roundedRating.toFixed(1)} / 5.0 Rating`;
+}
+
+function availableDapperServices(services: readonly DapService[]): DapService[] {
+  return dapOptions.filter((service) => services.includes(service));
 }
 
 const styles = StyleSheet.create({
@@ -1827,7 +1860,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   options: {
-    gap: 12,
+    gap: 8,
+    paddingBottom: 4,
+  },
+  optionListScroll: {
+    flex: 1,
+    minHeight: 0,
   },
   optionButton: {
     minHeight: 64,
@@ -1855,10 +1893,12 @@ const styles = StyleSheet.create({
   },
   optionTitleRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
   },
   optionTitle: {
+    flexShrink: 1,
     color: '#000000',
     fontFamily: displayFontFamily,
     fontSize: 16,

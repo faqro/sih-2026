@@ -2,6 +2,7 @@ import {
   ActivityIndicator,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -33,9 +34,11 @@ const MODE_CARDS: readonly ModeCardConfig[] = [
 ];
 
 const DAPPER_SERVICES: readonly DapService[] = [
-  'UberDap',
-  'UberDap Plus',
-  'UberDap Deluxe',
+  'Dap for Poor People',
+  'Dap (Standard)',
+  'Dap (Wheelchair-Accessible)',
+  'Dap & Dash',
+  'THE GOD DAP',
 ];
 
 type OnboardingModeScreenProps = {
@@ -76,7 +79,10 @@ export default function OnboardingModeScreen({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.topRow}>
           <BrandLogo size={56} />
           <Pressable
@@ -208,7 +214,7 @@ export default function OnboardingModeScreen({
             )}
           </Pressable>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -219,7 +225,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
+    justifyContent: 'center',
     paddingHorizontal: 24,
     paddingTop: 24,
     paddingBottom: 28,
@@ -349,6 +356,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   cardTitle: {
+    flex: 1,
+    flexShrink: 1,
     color: '#000000',
     fontSize: 20,
     fontWeight: '700',

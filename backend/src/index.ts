@@ -832,7 +832,7 @@ async function handleRealtimeMessage(
     session.isAuthenticating = false;
 
     if (user.activeMode === 'dapper') {
-      const offeredServices = user.offeredServices ?? [];
+      const offeredServices = (user.offeredServices ?? []).filter(isDapService);
       if (offeredServices.length === 0) {
         socket.close(1008, 'Choose at least one dapper service first.');
         return;
@@ -1793,7 +1793,7 @@ function serializeUser(user: {
     steamUsername: user.steamUsername ?? null,
     steamAvatar: user.steamAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
-    offeredServices: user.offeredServices ?? [],
+    offeredServices: (user.offeredServices ?? []).filter(isDapService),
     hasCompletedOnboarding: Boolean(user.hasCompletedOnboarding),
   };
 }
