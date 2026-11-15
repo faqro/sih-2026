@@ -6,12 +6,39 @@ export type DapService = 'UberDap' | 'UberDap Plus' | 'UberDap Deluxe';
 export type AuthUser = {
   id: string;
   username: string;
+  name?: string | null;
   authProvider?: AuthProvider;
   steamUsername?: string | null;
   steamAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
+  crispinessRating?: number | null;
+  crispinessRatingCount?: number;
   hasCompletedOnboarding: boolean;
+};
+
+export type ProfileUpdatePayload = {
+  name?: string | null;
+  username?: string;
+  currentPassword?: string;
+  newPassword?: string;
+};
+
+export type DapperRatingItem = {
+  id: string;
+  requestId: string;
+  rating: number;
+  comment: string | null;
+  service: DapService | null;
+  raterName: string;
+  ratedAt: string;
+};
+
+export type DapperRatingsResponse = {
+  averageRating: number | null;
+  totalRatings: number;
+  breakdown: Record<'1' | '2' | '3' | '4' | '5', number>;
+  recentRatings: DapperRatingItem[];
 };
 
 export type AuthResponse = {
@@ -174,15 +201,47 @@ export function submitDapRating(
   token: string,
   requestId: string,
   rating: number,
-): Promise<{ crispinessRating: number }> {
-  return requestJson<{ crispinessRating: number }>(
+  comment?: string,
+): Promise<{ crispinessRating: number; crispinessRatingCount?: number }> {
+  const trimmedComment = comment?.trim();
+  return requestJson<{ crispinessRating: number; crispinessRatingCount?: number }>(
     `/dap-requests/${encodeURIComponent(requestId)}/rating`,
     {
       method: 'POST',
       headers: authorizedHeaders(token, true),
-      body: JSON.stringify({ rating }),
+      body: JSON.stringify(
+        trimmedComment ? { rating, comment: trimmedComment } : { rating },
+      ),
     },
     'Unable to save the UberDap rating.',
+  );
+}
+
+export function updateProfile(
+  token: string,
+  payload: ProfileUpdatePayload,
+): Promise<AuthResponse> {
+  return requestJson<AuthResponse>(
+    '/auth/profile',
+    {
+      method: 'PATCH',
+      headers: authorizedHeaders(token, true),
+      body: JSON.stringify(payload),
+    },
+    'Unable to update profile settings.',
+  );
+}
+
+export function fetchDapperRatings(
+  token: string,
+): Promise<DapperRatingsResponse> {
+  return requestJson<DapperRatingsResponse>(
+    '/auth/ratings',
+    {
+      method: 'GET',
+      headers: authorizedHeaders(token),
+    },
+    'Unable to load dapper ratings.',
   );
 }
 

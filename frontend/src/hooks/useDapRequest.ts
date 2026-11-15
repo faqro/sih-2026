@@ -7,7 +7,9 @@ import type { Coordinates } from '../location/dapperLocation';
 export type MatchedDapper = {
   id: string;
   username: string;
+  name?: string | null;
   crispinessRating: number;
+  crispinessRatingCount?: number;
 };
 
 export type DapRequestStatus =
@@ -292,13 +294,24 @@ export function useDapRequest(
           'location' in message.dapper
             ? readCoordinates(message.dapper.location)
             : null;
+        const dapperName =
+          'name' in message.dapper && typeof message.dapper.name === 'string'
+            ? message.dapper.name
+            : null;
+        const crispinessRatingCount =
+          'crispinessRatingCount' in message.dapper &&
+          typeof message.dapper.crispinessRatingCount === 'number'
+            ? message.dapper.crispinessRatingCount
+            : undefined;
         stateRef.current = {
           ...stateRef.current,
           status: 'matched',
           matchedDapper: {
             id: message.dapper.id,
             username: message.dapper.username,
+            name: dapperName,
             crispinessRating: message.dapper.crispinessRating,
+            crispinessRatingCount,
           },
           matchedDapperLocation: dapperLocation,
         };

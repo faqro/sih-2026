@@ -36,6 +36,10 @@ type DapperLocationStreamState = {
 export function useDapperLocationStream(
   token: string,
   enabled: boolean,
+  onRatingReceived?: (payload: {
+    crispinessRating: number;
+    crispinessRatingCount: number;
+  }) => void,
 ): DapperLocationStreamState {
   const [isOnline, setIsOnline] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -53,10 +57,12 @@ export function useDapperLocationStream(
   const isOnlineRef = useRef(false);
   const isMountedRef = useRef(false);
   const isEnabledRef = useRef(enabled);
+  const onRatingReceivedRef = useRef(onRatingReceived);
   const serverMessageHandlerRef = useRef<
     (message: Record<string, unknown>) => void
   >(() => {});
   isEnabledRef.current = enabled;
+  onRatingReceivedRef.current = onRatingReceived;
 
   const stopStreaming = useCallback(() => {
     isOnlineRef.current = false;
@@ -294,6 +300,18 @@ export function useDapperLocationStream(
           current?.requestId === message.requestId ? null : current,
         );
         setIsResponding(false);
+        return;
+      }
+
+      if (
+        message.type === 'rating_received' &&
+        typeof message.crispinessRating === 'number' &&
+        typeof message.crispinessRatingCount === 'number'
+      ) {
+        onRatingReceivedRef.current?.({
+          crispinessRating: message.crispinessRating,
+          crispinessRatingCount: message.crispinessRatingCount,
+        });
       }
     },
     [],

@@ -11,6 +11,7 @@ export type DapService = (typeof DAP_SERVICES)[number];
 
 type UserDocument = {
   username: string;
+  name?: string | null;
   password?: string;
   authProvider: AuthProvider;
   steamId?: string | null;
@@ -35,6 +36,12 @@ const userSchema = new Schema<UserDocument>(
       minlength: 2,
       maxlength: 40,
       match: /^[a-z0-9_-]+$/,
+    },
+    name: {
+      type: String,
+      trim: true,
+      maxlength: 60,
+      default: null,
     },
     password: {
       type: String,
