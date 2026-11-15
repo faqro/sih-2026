@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { dapperLocationWebSocketUrl } from '../api/auth';
+import type { Coordinates } from '../location/dapperLocation';
 
 export type MatchedDapper = {
   id: string;
@@ -23,6 +24,8 @@ type DapRequestState = {
   deadlineAt: number | null;
   secondsRemaining: number;
   matchedDapper: MatchedDapper | null;
+  matchedDapperLocation: Coordinates | null;
+  userLocation: Coordinates | null;
   error: string | null;
 };
 
@@ -42,6 +45,8 @@ const initialState: DapRequestState = {
   deadlineAt: null,
   secondsRemaining: 600,
   matchedDapper: null,
+  matchedDapperLocation: null,
+  userLocation: null,
   error: null,
 };
 
@@ -126,6 +131,16 @@ export function useDapRequest(
             ) {
               return;
             }
+
+            const userLocation = {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            };
+            updateState((current) =>
+              current.status === 'searching'
+                ? { ...current, userLocation }
+                : current,
+            );
 
             try {
               socket.send(
@@ -239,9 +254,26 @@ export function useDapRequest(
             0,
             Math.ceil((message.deadlineAt as number - Date.now()) / 1000),
           ),
+          matchedDapper: null,
+          matchedDapperLocation: null,
           error: null,
         }));
         void startLocationUpdates(socket);
+        return;
+      }
+
+      if (
+        message.type === 'dapper_location' &&
+        typeof message.requestId === 'string' &&
+        message.requestId === stateRef.current.requestId
+      ) {
+        const location = readCoordinates(message.location);
+        if (location) {
+          updateState((current) => ({
+            ...current,
+            matchedDapperLocation: location,
+          }));
+        }
         return;
       }
 
@@ -256,6 +288,10 @@ export function useDapRequest(
         'crispinessRating' in message.dapper &&
         typeof message.dapper.crispinessRating === 'number'
       ) {
+        const dapperLocation =
+          'location' in message.dapper
+            ? readCoordinates(message.dapper.location)
+            : null;
         stateRef.current = {
           ...stateRef.current,
           status: 'matched',
@@ -264,6 +300,7 @@ export function useDapRequest(
             username: message.dapper.username,
             crispinessRating: message.dapper.crispinessRating,
           },
+          matchedDapperLocation: dapperLocation,
         };
         stopLocationUpdates();
         if (isMountedRef.current) {
@@ -332,7 +369,11 @@ export function useDapRequest(
         return;
       }
 
-      updateState(() => ({ ...initialState, status: 'connecting' }));
+      updateState(() => ({
+        ...initialState,
+        status: 'connecting',
+        userLocation: location,
+      }));
 
       try {
         const socket = new WebSocket(dapperLocationWebSocketUrl);
@@ -553,6 +594,27 @@ export function useDapRequest(
     resetRequest,
     startRequest,
   };
+}
+
+function readCoordinates(value: unknown): Coordinates | null {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('latitude' in value) ||
+    !('longitude' in value) ||
+    typeof value.latitude !== 'number' ||
+    typeof value.longitude !== 'number' ||
+    !Number.isFinite(value.latitude) ||
+    !Number.isFinite(value.longitude) ||
+    value.latitude < -90 ||
+    value.latitude > 90 ||
+    value.longitude < -180 ||
+    value.longitude > 180
+  ) {
+    return null;
+  }
+
+  return { latitude: value.latitude, longitude: value.longitude };
 }
 
 function parseServerMessage(data: unknown): Record<string, unknown> | null {

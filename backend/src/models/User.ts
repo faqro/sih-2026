@@ -18,6 +18,8 @@ type UserDocument = {
   steamAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
+  crispinessRatingTotal: number;
+  crispinessRatingCount: number;
   hasCompletedOnboarding: boolean;
   onboardingCompletedAt: Date | null;
 };
@@ -70,6 +72,18 @@ const userSchema = new Schema<UserDocument>(
     offeredServices: {
       type: [{ type: String, enum: DAP_SERVICES }],
       default: [],
+      required: true,
+    },
+    crispinessRatingTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: true,
+    },
+    crispinessRatingCount: {
+      type: Number,
+      default: 0,
+      min: 0,
       required: true,
     },
     hasCompletedOnboarding: {

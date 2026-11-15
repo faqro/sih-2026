@@ -22,6 +22,7 @@ import {
   verifySteamOpenIdCallback,
   type SteamUserProfile,
 } from './steamAuth.js';
+import { DapRating } from './models/DapRating.js';
 import {
   DAP_SERVICES,
   User,
@@ -38,6 +39,8 @@ type Coordinates = {
 type ActiveDapper = {
   username: string;
   offeredServices: DapService[];
+  crispinessRatingTotal: number;
+  crispinessRatingCount: number;
   socket: WebSocket | null;
   location: Coordinates | null;
   lastLocationAt: number;
@@ -82,6 +85,7 @@ const activeDappers = new Map<string, ActiveDapper>();
 const activeUserSockets = new Map<string, WebSocket>();
 const dapRequests = new Map<string, DapRequest>();
 const activeRequestIdsByUser = new Map<string, string>();
+const DAPPER_LOCATION_STALE_AFTER_MS = 15_000;
 
 server.on('upgrade', (request, socket, head) => {
   let pathname: string;
@@ -663,6 +667,99 @@ app.patch('/auth/preferences', async (request, response) => {
   }
 });
 
+app.post('/dap-requests/:requestId/rating', async (request, response) => {
+  const userId = authenticateRequest(request, response);
+
+  if (!userId) {
+    return;
+  }
+
+  const body: unknown = request.body;
+  if (
+    !isRecord(body) ||
+    typeof body.rating !== 'number' ||
+    !Number.isInteger(body.rating) ||
+    body.rating < 1 ||
+    body.rating > 5
+  ) {
+    response.status(400).json({ message: 'Rating must be a whole number from 1 to 5.' });
+    return;
+  }
+
+  let ratingClaimed = false;
+  try {
+    const requestId = request.params.requestId;
+    const ratingRecord = await DapRating.findOneAndUpdate(
+      { requestId, userId, rating: null },
+      { $set: { rating: body.rating } },
+      { new: true },
+    );
+
+    if (!ratingRecord) {
+      const existingRecord = await DapRating.exists({ requestId, userId });
+      response
+        .status(existingRecord ? 409 : 404)
+        .json({
+          message: existingRecord
+            ? 'This UberDap has already been rated.'
+            : 'No delivered UberDap was found to rate.',
+        });
+      return;
+    }
+    ratingClaimed = true;
+
+    const dapperUser = await User.findByIdAndUpdate(
+      ratingRecord.dapperId,
+      {
+        $inc: {
+          crispinessRatingTotal: body.rating,
+          crispinessRatingCount: 1,
+        },
+      },
+      { new: true },
+    ).select('crispinessRatingTotal crispinessRatingCount');
+
+    if (!dapperUser) {
+      await DapRating.updateOne(
+        { requestId, userId, rating: body.rating },
+        { $set: { rating: null } },
+      );
+      ratingClaimed = false;
+      response.status(404).json({ message: 'The dapper account no longer exists.' });
+      return;
+    }
+    ratingClaimed = false;
+
+    const dapper = activeDappers.get(dapperUser.id);
+    if (dapper) {
+      dapper.crispinessRatingTotal = dapperUser.crispinessRatingTotal;
+      dapper.crispinessRatingCount = dapperUser.crispinessRatingCount;
+    }
+
+    response.status(200).json({
+      crispinessRating:
+        dapperUser.crispinessRatingTotal / dapperUser.crispinessRatingCount,
+    });
+  } catch (error) {
+    if (ratingClaimed) {
+      try {
+        await DapRating.updateOne(
+          {
+            requestId: request.params.requestId,
+            userId,
+            rating: body.rating,
+          },
+          { $set: { rating: null } },
+        );
+      } catch (rollbackError) {
+        console.error('Unable to release UberDap rating:', rollbackError);
+      }
+    }
+    console.error('Unable to save UberDap rating:', error);
+    response.status(500).json({ message: 'Unable to save the UberDap rating.' });
+  }
+});
+
 app.delete('/auth/account', async (request, response) => {
   const userId = authenticateRequest(request, response);
 
@@ -717,7 +814,7 @@ async function handleRealtimeMessage(
 
     session.isAuthenticating = true;
     const user = await User.findById(tokenUserId).select(
-      'activeMode username offeredServices',
+      'activeMode username offeredServices crispinessRatingTotal crispinessRatingCount',
     );
 
     if (!user) {
@@ -745,6 +842,8 @@ async function handleRealtimeMessage(
         user.id,
         user.username,
         offeredServices,
+        user.crispinessRatingTotal ?? 0,
+        user.crispinessRatingCount ?? 0,
       );
       const previousSocket = previousDapper.socket;
       if (previousSocket && previousSocket !== socket) {
@@ -755,6 +854,8 @@ async function handleRealtimeMessage(
         user.id,
         user.username,
         offeredServices,
+        user.crispinessRatingTotal ?? 0,
+        user.crispinessRatingCount ?? 0,
       );
       dapper.socket = socket;
       dapper.location = null;
@@ -807,7 +908,7 @@ async function handleRealtimeMessage(
   }
 
   if (session.activeMode === 'dapper') {
-    handleDapperMessage(socket, session.userId, message);
+  await handleDapperMessage(socket, session.userId, message);
     return;
   }
 
@@ -824,11 +925,11 @@ async function handleRealtimeMessage(
   socket.close(1008, 'Invalid account mode.');
 }
 
-function handleDapperMessage(
+async function handleDapperMessage(
   socket: WebSocket,
   userId: string,
   message: Record<string, unknown>,
-): void {
+): Promise<void> {
   const dapper = activeDappers.get(userId);
 
   if (!dapper || dapper.socket !== socket) {
@@ -846,6 +947,19 @@ function handleDapperMessage(
 
     dapper.location = location;
     dapper.lastLocationAt = Date.now();
+    const activeRequest = dapper.activeRequestId
+      ? dapRequests.get(dapper.activeRequestId)
+      : undefined;
+    if (
+      activeRequest?.status === 'matched' &&
+      activeRequest.dapperId === userId
+    ) {
+      sendWebSocketMessage(activeRequest.userSocket, {
+        type: 'dapper_location',
+        requestId: activeRequest.id,
+        location,
+      });
+    }
     dispatchPendingRequests();
     return;
   }
@@ -861,7 +975,7 @@ function handleDapperMessage(
   }
 
   if (message.type === 'delivered') {
-    deliverDap(userId, dapper, message.requestId);
+    await deliverDap(userId, dapper, message.requestId);
     return;
   }
 
@@ -895,7 +1009,16 @@ function handleOrderMessage(
   if (message.type === 'location') {
     const location = readCoordinates(message);
 
-    if (!location || !request || request.status !== 'pending') {
+    if (!location) {
+      socket.close(1008, 'Invalid location message.');
+      return;
+    }
+
+    if (request?.status === 'matched') {
+      return;
+    }
+
+    if (!request || request.status !== 'pending') {
       socket.close(1008, 'No pending UberDap request accepts location.');
       return;
     }
@@ -1040,6 +1163,11 @@ function dispatchRequest(request: DapRequest): void {
     if (
       offeredDapper?.socket?.readyState === WebSocket.OPEN &&
       offeredDapper.location &&
+      offeredDapper.offeredServices.includes(request.service) &&
+      offeredDapper.activeRequestId === null &&
+      offeredDapper.pendingOfferId === request.id &&
+      Date.now() - offeredDapper.lastLocationAt <=
+        DAPPER_LOCATION_STALE_AFTER_MS &&
       distanceInKm(request.location, offeredDapper.location) <= 75
     ) {
       return;
@@ -1059,6 +1187,7 @@ function dispatchRequest(request: DapRequest): void {
       return (
         dapper.socket?.readyState === WebSocket.OPEN &&
         dapper.location !== null &&
+        Date.now() - dapper.lastLocationAt <= DAPPER_LOCATION_STALE_AFTER_MS &&
         dapper.activeRequestId === null &&
         dapper.pendingOfferId === null &&
         dapper.offeredServices.includes(request.service) &&
@@ -1157,7 +1286,8 @@ function sendUserRequestState(request: DapRequest): void {
       dapper: {
         id: request.dapperId,
         username: dapper?.username ?? 'Your dapper',
-        crispinessRating: 2.5,
+        crispinessRating: dapper ? getCrispinessRating(dapper) : 2.5,
+        location: dapper?.location ?? null,
       },
     });
   }
@@ -1177,19 +1307,31 @@ function acceptDapperOffer(
   }
 
   const request = dapRequests.get(requestId);
+  if (request?.status === 'pending' && Date.now() >= request.deadlineAt) {
+    expireDapRequest(request.id);
+    return;
+  }
+
   if (
     !request ||
     request.status !== 'pending' ||
     request.offeredDapperId !== dapperId ||
     dapper.activeRequestId !== null ||
     !dapper.location ||
+    !dapper.offeredServices.includes(request.service) ||
+    Date.now() - dapper.lastLocationAt > DAPPER_LOCATION_STALE_AFTER_MS ||
     distanceInKm(request.location, dapper.location) > 75
   ) {
-    clearDapperOffer(request, false);
-    if (request?.status === 'pending') {
+    if (request?.status === 'pending' && request.offeredDapperId === dapperId) {
       request.declinedDapperIds.add(dapperId);
+      clearDapperOffer(request, true);
       dispatchRequest(request);
       dispatchPendingRequests();
+    } else {
+      sendWebSocketMessage(dapper.socket, {
+        type: 'offer_cancelled',
+        requestId,
+      });
     }
     return;
   }
@@ -1209,7 +1351,8 @@ function acceptDapperOffer(
     dapper: {
       id: dapperId,
       username: dapper.username,
-      crispinessRating: 2.5,
+      crispinessRating: getCrispinessRating(dapper),
+      location: dapper.location,
     },
   });
   sendActiveRequestToDapper(dapper);
@@ -1244,11 +1387,11 @@ function declineDapperOffer(
   dispatchPendingRequests();
 }
 
-function deliverDap(
+async function deliverDap(
   dapperId: string,
   dapper: ActiveDapper,
   requestId: unknown,
-): void {
+): Promise<void> {
   if (
     typeof requestId !== 'string' ||
     dapper.activeRequestId !== requestId
@@ -1265,6 +1408,12 @@ function deliverDap(
     dapper.activeRequestId = null;
     return;
   }
+
+  await DapRating.create({
+    requestId,
+    userId: request.userId,
+    dapperId,
+  });
 
   sendWebSocketMessage(request.userSocket, {
     type: 'dap_delivered',
@@ -1474,12 +1623,16 @@ function getOrCreateDapper(
   userId: string,
   username: string,
   offeredServices: DapService[],
+  crispinessRatingTotal: number,
+  crispinessRatingCount: number,
 ): ActiveDapper {
   let dapper = activeDappers.get(userId);
   if (!dapper) {
     dapper = {
       username,
       offeredServices,
+      crispinessRatingTotal,
+      crispinessRatingCount,
       socket: null,
       location: null,
       lastLocationAt: 0,
@@ -1490,9 +1643,17 @@ function getOrCreateDapper(
   } else {
     dapper.username = username;
     dapper.offeredServices = offeredServices;
+    dapper.crispinessRatingTotal = crispinessRatingTotal;
+    dapper.crispinessRatingCount = crispinessRatingCount;
   }
 
   return dapper;
+}
+
+function getCrispinessRating(dapper: ActiveDapper): number {
+  return dapper.crispinessRatingCount === 0
+    ? 2.5
+    : dapper.crispinessRatingTotal / dapper.crispinessRatingCount;
 }
 
 function updateLiveDapperServices(

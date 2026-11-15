@@ -170,6 +170,22 @@ export function updateDapperPreferences(
   );
 }
 
+export function submitDapRating(
+  token: string,
+  requestId: string,
+  rating: number,
+): Promise<{ crispinessRating: number }> {
+  return requestJson<{ crispinessRating: number }>(
+    `/dap-requests/${encodeURIComponent(requestId)}/rating`,
+    {
+      method: 'POST',
+      headers: authorizedHeaders(token, true),
+      body: JSON.stringify({ rating }),
+    },
+    'Unable to save the UberDap rating.',
+  );
+}
+
 export function deleteAccount(token: string): Promise<void> {
   return requestJson<void>(
     '/auth/account',
