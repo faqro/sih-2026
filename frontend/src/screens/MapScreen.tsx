@@ -40,6 +40,7 @@ import {
 } from '../location/locationSearch';
 import { useDapperLocationStream } from '../hooks/useDapperLocationStream';
 import MapSurface from './MapSurface';
+import DapDecibelMeasurer from '../components/DapDecibelMeasurer';
 
 const displayFontFamily = Platform.select({
   web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -244,6 +245,7 @@ export default function MapScreen({
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [ratingError, setRatingError] = useState<string | null>(null);
+  const [isDapCompletedLocally, setIsDapCompletedLocally] = useState(false);
   const { height: viewportHeight } = useWindowDimensions();
   const sheetHeight = viewportHeight / 2;
   const profileSheetHeight = Math.min(Math.round(viewportHeight * 0.85), 680);
@@ -263,10 +265,6 @@ export default function MapScreen({
   const searchInputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const reverseGeocodeIdRef = useRef(0);
   activeModeRef.current = activeMode;
-  const sheetTranslateY = sheetProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [sheetHeight, 0],
-  });
   const preferencesTranslateY = preferencesProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [sheetHeight, 0],
@@ -290,6 +288,15 @@ export default function MapScreen({
     outputRange: [sheetHeight, 0],
   });
   const dapRequest = useDapRequest(token, activeMode === 'order');
+  const matchedSheetHeight = Math.min(Math.round(viewportHeight * 0.78), 580);
+  const requestSheetHeight =
+    dapRequest.status === 'matched' && !isDapCompletedLocally
+      ? matchedSheetHeight
+      : sheetHeight;
+  const sheetTranslateY = sheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [requestSheetHeight, 0],
+  });
   const {
     acceptOffer,
     activeDap,
@@ -722,6 +729,12 @@ export default function MapScreen({
       }
     }
   }, [dapRequest.error, dapRequest.status]);
+
+  useEffect(() => {
+    if (dapRequest.status === 'idle') {
+      setIsDapCompletedLocally(false);
+    }
+  }, [dapRequest.status]);
 
   useEffect(() => {
     if (hasDapperContent) {
@@ -1918,7 +1931,7 @@ export default function MapScreen({
             style={[
               styles.requestSheet,
               {
-                height: sheetHeight,
+                height: requestSheetHeight,
                 transform: [{ translateY: sheetTranslateY }],
               },
             ]}
@@ -1926,7 +1939,9 @@ export default function MapScreen({
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>
                 {dapRequest.status === 'matched'
-                  ? 'Your UberDap'
+                  ? isDapCompletedLocally
+                    ? 'UberDap delivered'
+                    : 'Your UberDap'
                   : dapRequest.status === 'delivered'
                     ? 'UberDap delivered'
                     : dapRequest.status === 'connecting'
@@ -2095,42 +2110,27 @@ export default function MapScreen({
                   </>
                 )}
               </View>
-            ) : dapRequest.status === 'matched' ? (
-              <View style={styles.matchingContent}>
-                <Text style={styles.matchSuccessText}>
-                  Your UberDap will arrive soon.
-                </Text>
-                <Text style={styles.matchedDapperName}>
-                  {dapRequest.matchedDapper?.name ||
-                    dapRequest.matchedDapper?.username}
-                </Text>
-                {dapRequest.matchedDapper?.name ? (
-                  <Text style={styles.matchedDapperHandle}>
-                    @{dapRequest.matchedDapper.username}
-                  </Text>
-                ) : null}
-                <Text style={styles.crispinessStars}>
-                  {dapRequest.matchedDapper?.crispinessRatingCount === 0
-                    ? 'New Dapper · No ratings yet'
-                    : formatCrispinessStars(
-                        dapRequest.matchedDapper?.crispinessRating ?? 2.5,
-                      )}
-                </Text>
-                {dapRequest.matchedDapper?.crispinessRatingCount !== 0 ? (
-                  <Text style={styles.crispinessRating}>
-                    Crispiness Rating:{' '}
-                    {dapRequest.matchedDapper?.crispinessRating.toFixed(1)} / 5
-                    {typeof dapRequest.matchedDapper?.crispinessRatingCount ===
-                    'number'
-                      ? ` (${dapRequest.matchedDapper.crispinessRatingCount} ${
-                          dapRequest.matchedDapper.crispinessRatingCount === 1
-                            ? 'rating'
-                            : 'ratings'
-                        })`
-                      : ''}
-                  </Text>
-                ) : null}
-              </View>
+            ) : dapRequest.status === 'matched' && !isDapCompletedLocally ? (
+              <ScrollView
+                bounces={false}
+                contentContainerStyle={styles.matchedScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <DapDecibelMeasurer
+                  dapperName={
+                    dapRequest.matchedDapper?.name ||
+                    dapRequest.matchedDapper?.username
+                  }
+                  dapperRating={dapRequest.matchedDapper?.crispinessRating}
+                  dapperRatingCount={
+                    dapRequest.matchedDapper?.crispinessRatingCount
+                  }
+                  dapperUsername={dapRequest.matchedDapper?.username}
+                  onProceedToRating={() => setIsDapCompletedLocally(true)}
+                  targetDb={85}
+                />
+              </ScrollView>
             ) : (
               <ScrollView
                 bounces={false}
@@ -3938,10 +3938,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   matchedDapperHandle: {
-    color: '#6f7a90',
+    color: '#888888',
     fontSize: 13,
     fontWeight: '500',
     marginTop: 2,
+  },
+  matchedScrollContent: {
+    paddingBottom: 28,
   },
   deliveredScrollContent: {
     flexGrow: 1,
