@@ -1313,6 +1313,65 @@ app.delete('/auth/account', async (request, response) => {
       return;
     }
 
+    const ratingsLeftByUser = await DapRating.aggregate<{
+      _id: string;
+      totalRating: number;
+      ratingCount: number;
+    }>([
+      {
+        $match: {
+          userId,
+          dapperId: { $ne: userId },
+          rating: { $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: '$dapperId',
+          totalRating: { $sum: '$rating' },
+          ratingCount: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (ratingsLeftByUser.length > 0) {
+      await User.bulkWrite(
+        ratingsLeftByUser.map((entry) => ({
+          updateOne: {
+            filter: { _id: entry._id },
+            update: [
+              {
+                $set: {
+                  crispinessRatingTotal: {
+                    $max: [
+                      0,
+                      { $subtract: ['$crispinessRatingTotal', entry.totalRating] },
+                    ],
+                  },
+                  crispinessRatingCount: {
+                    $max: [
+                      0,
+                      { $subtract: ['$crispinessRatingCount', entry.ratingCount] },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        })),
+      );
+    }
+
+    await DapRating.deleteMany({
+      $or: [{ userId }, { dapperId: userId }],
+    });
+
+    for (const [requestId, dapRequest] of dapRequests.entries()) {
+      if (dapRequest.userId === userId || dapRequest.dapperId === userId) {
+        dapRequests.delete(requestId);
+      }
+    }
+
     stopDapperLocationStream(userId, 'Account deleted.');
     stopOrderLocationStream(userId, 'Account deleted.');
     response.status(204).end();

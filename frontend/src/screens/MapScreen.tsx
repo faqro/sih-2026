@@ -221,6 +221,8 @@ export default function MapScreen({
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [ratingsData, setRatingsData] = useState<DapperRatingsResponse | null>(
     null,
   );
@@ -249,6 +251,7 @@ export default function MapScreen({
   const preferencesProgress = useRef(new Animated.Value(0)).current;
   const profileProgress = useRef(new Animated.Value(0)).current;
   const passwordSheetProgress = useRef(new Animated.Value(0)).current;
+  const deleteSheetProgress = useRef(new Animated.Value(0)).current;
   const dapperSheetProgress = useRef(new Animated.Value(0)).current;
   const dapperContentRef = useRef(false);
   const dapperSheetOpenRef = useRef(false);
@@ -276,6 +279,11 @@ export default function MapScreen({
   const passwordSheetTranslateY = passwordSheetProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [passwordSheetHeight, 0],
+  });
+  const deleteSheetHeight = Math.min(Math.round(viewportHeight * 0.62), 460);
+  const deleteSheetTranslateY = deleteSheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [deleteSheetHeight, 0],
   });
   const dapperSheetTranslateY = dapperSheetProgress.interpolate({
     inputRange: [0, 1],
@@ -641,8 +649,42 @@ export default function MapScreen({
     onSignOut();
   }
 
-  function handleDeleteAccount() {
+  function openDeleteModal() {
     setIsMenuOpen(false);
+    setDeleteConfirmText('');
+    setIsDeleteModalOpen(true);
+    deleteSheetProgress.setValue(0);
+    Animated.timing(deleteSheetProgress, {
+      toValue: 1,
+      duration: 260,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closeDeleteModal() {
+    if (isSubmitting) {
+      return;
+    }
+    Animated.timing(deleteSheetProgress, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setIsDeleteModalOpen(false);
+        setDeleteConfirmText('');
+      }
+    });
+  }
+
+  function handleDeleteAccount() {
+    openDeleteModal();
+  }
+
+  function confirmDeleteAccount() {
+    if (isSubmitting || deleteConfirmText.trim() !== 'DELETE') {
+      return;
+    }
     requestLocationRequestIdRef.current += 1;
     dapRequest.cancelRequest();
     resetDapperLocationState();
@@ -1568,7 +1610,8 @@ export default function MapScreen({
         !isMenuOpen &&
         !isPreferencesOpen &&
         !isProfileOpen &&
-        !isPasswordModalOpen ? (
+        !isPasswordModalOpen &&
+        !isDeleteModalOpen ? (
           <Text style={styles.modeError}>{error}</Text>
         ) : null}
         {locationTrackingError ? (
@@ -2430,6 +2473,30 @@ export default function MapScreen({
                     </Pressable>
                   </View>
                 )}
+
+                <View style={styles.deleteDangerSection}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isSubmitting}
+                    onPress={openDeleteModal}
+                    style={({ pressed }) => [
+                      styles.deleteAccountCard,
+                      pressed && styles.deleteAccountCardPressed,
+                    ]}
+                  >
+                    <View style={styles.changePasswordCardContent}>
+                      <Text style={styles.deleteAccountCardTitle}>
+                        Delete Account
+                      </Text>
+                      <Text style={styles.deleteAccountCardSubtitle}>
+                        Permanently remove your account and all reviews
+                      </Text>
+                    </View>
+                    <View style={styles.deleteAccountArrowContainer}>
+                      <Text style={styles.deleteAccountArrow}>→</Text>
+                    </View>
+                  </Pressable>
+                </View>
               </View>
 
               {!isDapperMode ? renderDapperRatingsSection() : null}
@@ -2560,6 +2627,103 @@ export default function MapScreen({
                     <ActivityIndicator color="#ffffff" />
                   ) : (
                     <Text style={styles.confirmButtonText}>Update Password</Text>
+                  )}
+                </Pressable>
+              </ScrollView>
+            </Animated.View>
+          </Animated.View>
+        ) : null}
+
+        {isDeleteModalOpen ? (
+          <Animated.View
+            style={[
+              styles.passwordModalBackdrop,
+              {
+                opacity: deleteSheetProgress,
+              },
+            ]}
+          >
+            <Pressable
+              accessibilityLabel="Dismiss delete account sheet"
+              onPress={closeDeleteModal}
+              style={StyleSheet.absoluteFill}
+            />
+            <Animated.View
+              style={[
+                styles.passwordSheet,
+                {
+                  height: deleteSheetHeight,
+                  transform: [{ translateY: deleteSheetTranslateY }],
+                },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSubmitting}
+                  onPress={closeDeleteModal}
+                  style={styles.sheetCloseButton}
+                >
+                  <Text style={styles.sheetCloseText}>Cancel</Text>
+                </Pressable>
+                <Text style={styles.sheetTitle}>Delete Account</Text>
+                <View style={styles.sheetCloseButton} />
+              </View>
+
+              <ScrollView
+                bounces={false}
+                contentContainerStyle={styles.passwordScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <View style={styles.deleteWarningBox}>
+                  <Text style={styles.deleteWarningTitle}>
+                    This action is permanent
+                  </Text>
+                  <Text style={styles.deleteWarningBody}>
+                    Deleting your account will permanently erase your profile,
+                    crispiness ratings, and all reviews you have given or
+                    received.
+                  </Text>
+                </View>
+
+                <Text style={styles.inputLabel}>
+                  Type <Text style={styles.deleteKeyword}>DELETE</Text> to
+                  confirm
+                </Text>
+                <TextInput
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  editable={!isSubmitting}
+                  onChangeText={setDeleteConfirmText}
+                  placeholder="DELETE"
+                  placeholderTextColor="#888888"
+                  style={styles.profileInput}
+                  value={deleteConfirmText}
+                />
+
+                {error ? (
+                  <Text style={styles.profileErrorText}>{error}</Text>
+                ) : null}
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={
+                    isSubmitting || deleteConfirmText.trim() !== 'DELETE'
+                  }
+                  onPress={confirmDeleteAccount}
+                  style={[
+                    styles.deleteConfirmButton,
+                    (isSubmitting || deleteConfirmText.trim() !== 'DELETE') &&
+                      styles.disabledButton,
+                  ]}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.confirmButtonText}>
+                      Delete Account Permanently
+                    </Text>
                   )}
                 </Pressable>
               </ScrollView>
@@ -3901,6 +4065,79 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 14,
     fontWeight: '700',
+  },
+  deleteDangerSection: {
+    marginTop: 12,
+  },
+  deleteAccountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  deleteAccountCardPressed: {
+    backgroundColor: '#feecec',
+  },
+  deleteAccountCardTitle: {
+    color: '#b42318',
+    fontFamily: displayFontFamily,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  deleteAccountCardSubtitle: {
+    color: '#912018',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  deleteAccountArrowContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#fde4e4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteAccountArrow: {
+    color: '#b42318',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  deleteWarningBox: {
+    backgroundColor: '#fff5f5',
+    borderWidth: 1,
+    borderColor: '#f5c2c2',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+  },
+  deleteWarningTitle: {
+    color: '#b42318',
+    fontFamily: displayFontFamily,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  deleteWarningBody: {
+    color: '#7a271a',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  deleteKeyword: {
+    color: '#b42318',
+    fontWeight: '800',
+  },
+  deleteConfirmButton: {
+    marginTop: 16,
+    height: 50,
+    borderRadius: 12,
+    backgroundColor: '#b42318',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   passwordModalBackdrop: {
     position: 'absolute',
