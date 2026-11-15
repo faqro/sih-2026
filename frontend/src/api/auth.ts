@@ -1,6 +1,6 @@
 export type AuthMode = 'login' | 'signup';
 export type AppMode = 'order' | 'dapper';
-export type AuthProvider = 'local' | 'steam' | 'strava';
+export type AuthProvider = 'local' | 'steam' | 'strava' | 'osu';
 export type DapService =
   | 'Dap for Poor People'
   | 'Dap (Standard)'
@@ -18,6 +18,8 @@ export type AuthUser = {
   steamAvatar?: string | null;
   stravaUsername?: string | null;
   stravaAvatar?: string | null;
+  osuUsername?: string | null;
+  osuAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   crispinessRating?: number | null;
@@ -73,6 +75,9 @@ export type SteamSsoCancelResponse = {
 export type StravaSsoStartResponse = SteamSsoStartResponse;
 export type StravaSsoStatusResponse = SteamSsoStatusResponse;
 export type StravaSsoCancelResponse = SteamSsoCancelResponse;
+export type OsuSsoStartResponse = SteamSsoStartResponse;
+export type OsuSsoStatusResponse = SteamSsoStatusResponse;
+export type OsuSsoCancelResponse = SteamSsoCancelResponse;
 
 export type OnboardingChoice =
   | { mode: 'order' }
@@ -373,5 +378,58 @@ export function cancelStravaSso(
       body: JSON.stringify({ state, pollToken }),
     },
     'Unable to cancel Strava Sign-In.',
+  );
+}
+
+export function startOsuSso(
+  returnTo?: string,
+): Promise<OsuSsoStartResponse> {
+  return requestJson<OsuSsoStartResponse>(
+    '/auth/osu/start',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(returnTo ? { returnTo } : {}),
+    },
+    'Unable to start osu! Sign-In.',
+  );
+}
+
+export function exchangeOsuSsoCode(code: string): Promise<AuthResponse> {
+  return requestJson<AuthResponse>(
+    '/auth/osu/exchange',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    },
+    'Unable to complete osu! Sign-In.',
+  );
+}
+
+export function fetchOsuSsoStatus(
+  state: string,
+  pollToken: string,
+): Promise<OsuSsoStatusResponse> {
+  const params = new URLSearchParams({ state, pollToken });
+  return requestJson<OsuSsoStatusResponse>(
+    `/auth/osu/status?${params.toString()}`,
+    { method: 'GET' },
+    'Unable to check osu! Sign-In status.',
+  );
+}
+
+export function cancelOsuSso(
+  state: string,
+  pollToken: string,
+): Promise<OsuSsoCancelResponse> {
+  return requestJson<OsuSsoCancelResponse>(
+    '/auth/osu/cancel',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, pollToken }),
+    },
+    'Unable to cancel osu! Sign-In.',
   );
 }

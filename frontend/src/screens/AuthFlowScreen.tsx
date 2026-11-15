@@ -23,7 +23,7 @@ const displayFontFamily = Platform.select({
   default: undefined,
 });
 
-export type SocialProvider = 'steam' | 'strava' | 'spotify' | 'osu';
+export type SocialProvider = 'steam' | 'strava' | 'osu';
 
 type ProviderConfig = {
   id: SocialProvider;
@@ -44,12 +44,6 @@ const PROVIDERS: readonly ProviderConfig[] = [
     label: 'Continue with Strava',
     borderColor: '#FAC8B8',
     icon: require('../../assets/providers/strava.png'),
-  },
-  {
-    id: 'spotify',
-    label: 'Continue with Spotify',
-    borderColor: '#B3EEC9',
-    icon: require('../../assets/providers/spotify.png'),
   },
   {
     id: 'osu',
@@ -394,7 +388,9 @@ export default function AuthFlowScreen({
                       ? 'Steam '
                       : pendingProvider === 'strava'
                         ? 'Strava '
-                        : ''}sign-in
+                        : pendingProvider === 'osu'
+                          ? 'OSU '
+                          : ''}sign-in
                   </Text>
                 </Pressable>
               ) : null}

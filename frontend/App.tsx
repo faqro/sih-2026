@@ -13,15 +13,19 @@ import {
 import {
   ApiError,
   authenticate,
+  cancelOsuSso,
   cancelSteamSso,
   cancelStravaSso,
   completeOnboarding,
   deleteAccount,
+  exchangeOsuSsoCode,
   exchangeSteamSsoCode,
   exchangeStravaSsoCode,
   fetchCurrentUser,
+  fetchOsuSsoStatus,
   fetchSteamSsoStatus,
   fetchStravaSsoStatus,
+  startOsuSso,
   startSteamSso,
   startStravaSso,
   updateDapperPreferences,
@@ -32,6 +36,7 @@ import {
   type AuthUser,
   type DapService,
   type OnboardingChoice,
+  type OsuSsoStatusResponse,
   type ProfileUpdatePayload,
   type SteamSsoStatusResponse,
   type StravaSsoStatusResponse,
@@ -57,10 +62,9 @@ type SignedInUser = AuthUser & {
 const PROVIDER_LABELS: Record<SocialProvider, string> = {
   steam: 'Steam',
   strava: 'Strava',
-  spotify: 'Spotify',
   osu: 'OSU',
 };
-type SsoProvider = 'steam' | 'strava';
+type SsoProvider = 'steam' | 'strava' | 'osu';
 
 const WEB_GLOBAL_CSS = `
   * {
@@ -90,7 +94,7 @@ function parseSsoCallbackUrl(rawUrl: string): {
 } {
   try {
     const parsed = new URL(rawUrl);
-    for (const provider of ['steam', 'strava'] as const) {
+    for (const provider of ['steam', 'strava', 'osu'] as const) {
       const code = parsed.searchParams.get(`${provider}_code`);
       const error = parsed.searchParams.get(`${provider}_error`);
       if (code !== null || error !== null) {
@@ -114,7 +118,7 @@ function consumeWebSsoCallbackParams(): {
 
   const url = new URL(window.location.href);
   let callback = { provider: null as SsoProvider | null, code: null as string | null, error: null as string | null };
-  for (const provider of ['steam', 'strava'] as const) {
+  for (const provider of ['steam', 'strava', 'osu'] as const) {
     const code = url.searchParams.get(`${provider}_code`);
     const error = url.searchParams.get(`${provider}_error`);
     if (code !== null || error !== null) {
@@ -186,7 +190,9 @@ export default function App() {
       const result =
         provider === 'steam'
           ? await exchangeSteamSsoCode(code)
-          : await exchangeStravaSsoCode(code);
+          : provider === 'strava'
+            ? await exchangeStravaSsoCode(code)
+            : await exchangeOsuSsoCode(code);
       saveAuthToken(result.token);
       if (isMountedRef.current) {
         setUser({ ...result.user, token: result.token });
@@ -330,15 +336,19 @@ export default function App() {
 
     if (activeSession) {
       const cancelSso =
-        activeSession.provider === 'steam' ? cancelSteamSso : cancelStravaSso;
+        activeSession.provider === 'steam'
+          ? cancelSteamSso
+          : activeSession.provider === 'strava'
+            ? cancelStravaSso
+            : cancelOsuSso;
       await cancelSso(activeSession.state, activeSession.pollToken).catch(() => {});
     }
   }
 
   async function handleProviderPress(provider: SocialProvider) {
-    if (provider !== 'steam' && provider !== 'strava') {
+    if (provider !== 'steam' && provider !== 'strava' && provider !== 'osu') {
       setError(
-        `${PROVIDER_LABELS[provider]} sign-in is coming soon. Please use Steam or Log in / Sign up.`,
+        `${PROVIDER_LABELS[provider]} sign-in is coming soon. Please use Steam, Strava, OSU, or Log in / Sign up.`,
       );
       return;
     }
@@ -358,11 +368,19 @@ export default function App() {
           : `uberdaps://auth/${ssoProvider}`;
 
       const startSso =
-        ssoProvider === 'steam' ? startSteamSso : startStravaSso;
+        ssoProvider === 'steam'
+          ? startSteamSso
+          : ssoProvider === 'strava'
+            ? startStravaSso
+            : startOsuSso;
+      const cancelSso =
+        ssoProvider === 'steam'
+          ? cancelSteamSso
+          : ssoProvider === 'strava'
+            ? cancelStravaSso
+            : cancelOsuSso;
       const { authorizeUrl, state, pollToken } = await startSso(returnTo);
       if (!isCurrentAttempt()) {
-        const cancelSso =
-          ssoProvider === 'steam' ? cancelSteamSso : cancelStravaSso;
         void cancelSso(state, pollToken).catch(() => {});
         return;
       }
@@ -393,12 +411,17 @@ export default function App() {
           return;
         }
 
-        let status: SteamSsoStatusResponse | StravaSsoStatusResponse;
+        let status:
+          | SteamSsoStatusResponse
+          | StravaSsoStatusResponse
+          | OsuSsoStatusResponse;
         try {
           status =
             ssoProvider === 'steam'
               ? await fetchSteamSsoStatus(state, pollToken)
-              : await fetchStravaSsoStatus(state, pollToken);
+              : ssoProvider === 'strava'
+                ? await fetchStravaSsoStatus(state, pollToken)
+                : await fetchOsuSsoStatus(state, pollToken);
           consecutivePollErrors = 0;
         } catch (pollError) {
           if (!ssoPollActiveRef.current || !isCurrentAttempt()) {
@@ -445,8 +468,6 @@ export default function App() {
         activeSsoSessionRef.current = null;
         setError(`${PROVIDER_LABELS[ssoProvider]} sign-in timed out. Please try again.`);
         setPendingProvider(null);
-        const cancelSso =
-          ssoProvider === 'steam' ? cancelSteamSso : cancelStravaSso;
         await cancelSso(state, pollToken).catch(() => {});
       }
     } catch (ssoError) {
@@ -463,7 +484,11 @@ export default function App() {
       );
       if (startedSession) {
         const cancelSso =
-          ssoProvider === 'steam' ? cancelSteamSso : cancelStravaSso;
+          ssoProvider === 'steam'
+            ? cancelSteamSso
+            : ssoProvider === 'strava'
+              ? cancelStravaSso
+              : cancelOsuSso;
         void cancelSso(startedSession.state, startedSession.pollToken).catch(() => {});
       }
     }
@@ -737,6 +762,8 @@ export default function App() {
             steamUsername={user.steamUsername}
             stravaAvatar={user.stravaAvatar}
             stravaUsername={user.stravaUsername}
+            osuAvatar={user.osuAvatar}
+            osuUsername={user.osuUsername}
             token={user.token}
             username={user.username}
           />

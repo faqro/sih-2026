@@ -1,7 +1,7 @@
 import { model, Schema } from 'mongoose';
 
 export type AppMode = 'order' | 'dapper';
-export type AuthProvider = 'local' | 'steam' | 'strava';
+export type AuthProvider = 'local' | 'steam' | 'strava' | 'osu';
 export const DAP_SERVICES = [
   'Dap for Poor People',
   'Dap (Standard)',
@@ -23,6 +23,9 @@ type UserDocument = {
   stravaId?: string | null;
   stravaUsername?: string | null;
   stravaAvatar?: string | null;
+  osuId?: string | null;
+  osuUsername?: string | null;
+  osuAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   crispinessRatingTotal: number;
@@ -56,7 +59,7 @@ const userSchema = new Schema<UserDocument>(
     },
     authProvider: {
       type: String,
-      enum: ['local', 'steam', 'strava'],
+      enum: ['local', 'steam', 'strava', 'osu'],
       default: 'local',
       required: true,
     },
@@ -88,6 +91,22 @@ const userSchema = new Schema<UserDocument>(
       default: null,
     },
     stravaAvatar: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    osuId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    osuUsername: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    osuAvatar: {
       type: String,
       trim: true,
       default: null,

@@ -67,6 +67,24 @@ only the app owner can authorize during that stage. Upgrade access in the Strava
 API dashboard when ready to allow other athletes, and submit the app for review
 if you need capacity beyond the default limit.
 
+### osu! sign-in
+
+Register an OAuth application on your
+[osu! Account Settings](https://osu.ppy.sh/home/account/edit#new-oauth-application)
+page and set **Application Callback URL** to the full backend callback URL:
+- Local: `http://localhost:3000/auth/osu/callback`
+- Production: `https://your-app.fly.dev/auth/osu/callback`
+
+Set `OSU_CLIENT_ID`, `OSU_CLIENT_SECRET`, and `OSU_REDIRECT_URI` in the backend
+environment (`backend/.env` locally, and as Fly secrets in production):
+
+```sh
+fly secrets set OSU_CLIENT_ID=YOUR_CLIENT_ID OSU_CLIENT_SECRET=YOUR_CLIENT_SECRET OSU_REDIRECT_URI=https://your-app.fly.dev/auth/osu/callback
+```
+
+The backend requests only osu!'s `identify` scope and uses `GET /api/v2/me`
+during login without storing osu! access or refresh tokens.
+
 The WebSocket endpoint `/ws/dapper-location` accepts an initial JSON message
 `{"type":"authenticate","token":"<jwt>"}`. Dappers send
 `{"type":"location","latitude":...,"longitude":...}` while online. Order-mode

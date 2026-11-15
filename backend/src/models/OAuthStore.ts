@@ -2,7 +2,7 @@ import { model, Schema } from 'mongoose';
 
 type OAuthSessionDocument = {
   state: string;
-  provider: 'strava';
+  provider: 'strava' | 'osu';
   pollToken: string;
   redirectUri: string;
   returnTo: string | null;
@@ -21,7 +21,7 @@ const oauthSessionSchema = new Schema<OAuthSessionDocument>({
   },
   provider: {
     type: String,
-    enum: ['strava'],
+    enum: ['strava', 'osu'],
     required: true,
   },
   pollToken: {

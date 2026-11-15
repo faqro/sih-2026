@@ -34,6 +34,18 @@ import {
   createStravaAuthorizationSession,
   type StravaUserProfile,
 } from './stravaAuth.js';
+import {
+  OsuAuthConfigError,
+  OsuAuthFlowError,
+  cancelOsuAuthSession,
+  completeOsuSessionWithCode,
+  createOsuAuthorizationSession,
+  getOsuAuthSession,
+  getOsuAuthSessionForPoll,
+  markOsuSessionError,
+  verifyOsuOAuthCallback,
+  type OsuUserProfile,
+} from './osuAuth.js';
 import { DapRating } from './models/DapRating.js';
 import {
   DAP_SERVICES,
@@ -257,7 +269,11 @@ app.post('/auth/login', async (request, response) => {
 
     if (user.authProvider !== 'local' || !user.password) {
       const provider =
-        user.authProvider === 'strava' ? 'Strava' : 'Steam';
+        user.authProvider === 'strava'
+          ? 'Strava'
+          : user.authProvider === 'osu'
+            ? 'OSU'
+            : 'Steam';
       response.status(400).json({
         message: `This account uses ${provider} Sign-In. Please tap "Continue with ${provider}".`,
       });
@@ -733,6 +749,218 @@ app.post('/auth/strava/cancel', async (request, response) => {
   }
 });
 
+app.post('/auth/osu/start', async (request, response) => {
+  const body: unknown = request.body;
+  const rawReturnTo =
+    isRecord(body) && typeof body.returnTo === 'string' ? body.returnTo : null;
+  const returnTo = resolveSafeReturnTo(rawReturnTo);
+
+  try {
+    const redirectUri = resolveOsuRedirectUri(request);
+    const session = await createOsuAuthorizationSession({
+      redirectUri,
+      returnTo,
+    });
+    response.status(200).json(session);
+  } catch (error) {
+    if (error instanceof OsuAuthConfigError) {
+      response.status(503).json({ message: error.message });
+      return;
+    }
+    if (error instanceof OsuAuthFlowError) {
+      response.status(error.status).json({ message: error.message });
+      return;
+    }
+    console.error('Unable to start osu! SSO:', error);
+    response.status(500).json({ message: 'Unable to start osu! Sign-In.' });
+  }
+});
+
+app.get('/auth/osu/callback', async (request, response) => {
+  const state =
+    typeof request.query.state === 'string' ? request.query.state : '';
+  const existingSession = state ? await getOsuAuthSession(state) : null;
+  const fallbackReturnTo = resolveSafeReturnTo(existingSession?.returnTo ?? null);
+  const callbackError =
+    typeof request.query.error === 'string' ? request.query.error : '';
+
+  if (callbackError) {
+    const message =
+      callbackError === 'access_denied'
+        ? 'osu! sign-in was cancelled.'
+        : 'osu! authorization failed.';
+    await markOsuSessionError(state, message);
+    sendOsuCallbackError(response, fallbackReturnTo, message);
+    return;
+  }
+  if (!state) {
+    const message = 'Missing osu! sign-in state parameter.';
+    sendOsuCallbackError(response, fallbackReturnTo, message);
+    return;
+  }
+
+  try {
+    const code = typeof request.query.code === 'string' ? request.query.code : '';
+    if (!code) {
+      throw new OsuAuthFlowError(
+        'osu! did not return an authorization code.',
+        400,
+      );
+    }
+    const { profile, session } = await verifyOsuOAuthCallback({
+      state,
+      code,
+    });
+    if (session.status !== 'pending') {
+      throw new OsuAuthFlowError('osu! sign-in was cancelled.', 400);
+    }
+
+    const user = await findOrCreateOsuUser(profile);
+    const serialized = serializeUser(user);
+    const token = signUserToken(serialized);
+    const exchangeCode = await createExchangeCode(token, serialized);
+    if (!(await completeOsuSessionWithCode(state, exchangeCode))) {
+      await consumeExchangeCode(exchangeCode);
+      throw new OsuAuthFlowError('osu! sign-in was cancelled.', 400);
+    }
+
+    const targetReturnTo = resolveSafeReturnTo(session.returnTo);
+    if (targetReturnTo && isHttpUrl(targetReturnTo)) {
+      const redirectTarget = new URL(targetReturnTo);
+      redirectTarget.searchParams.set('osu_code', exchangeCode);
+      response.redirect(302, redirectTarget.toString());
+      return;
+    }
+
+    const deepLinkTarget = buildNativeOsuDeepLink(targetReturnTo, {
+      osu_code: exchangeCode,
+    });
+    response
+      .status(200)
+      .type('html')
+      .send(
+        renderSteamCallbackHtml(
+          'Signed in with osu!',
+          'Returning you to UberDaps. Tap the button below if the app does not open automatically.',
+          deepLinkTarget,
+        ),
+      );
+  } catch (error) {
+    const message =
+      error instanceof OsuAuthConfigError || error instanceof OsuAuthFlowError
+        ? error.message
+        : 'Unable to complete osu! Sign-In.';
+    console.error('osu! SSO callback error:', error);
+    await markOsuSessionError(state, message);
+    sendOsuCallbackError(response, fallbackReturnTo, message);
+  }
+});
+
+app.post('/auth/osu/exchange', async (request, response) => {
+  const body: unknown = request.body;
+  if (
+    !isRecord(body) ||
+    typeof body.code !== 'string' ||
+    body.code.trim().length === 0
+  ) {
+    response.status(400).json({ message: 'osu! exchange code is required.' });
+    return;
+  }
+  try {
+    const payload = await consumeExchangeCode<SerializedUser>(body.code.trim());
+    if (!payload) {
+      response.status(401).json({
+        message: 'osu! sign-in session expired. Please try again.',
+      });
+      return;
+    }
+    response.status(200).json(payload);
+  } catch (error) {
+    console.error('Unable to exchange osu! code:', error);
+    response.status(500).json({ message: 'Unable to complete osu! Sign-In.' });
+  }
+});
+
+app.get('/auth/osu/status', async (request, response) => {
+  const state =
+    typeof request.query.state === 'string' ? request.query.state.trim() : '';
+  const pollToken =
+    typeof request.query.pollToken === 'string'
+      ? request.query.pollToken.trim()
+      : request.get('x-osu-poll-token')?.trim() || '';
+  if (!state || !pollToken) {
+    response.status(400).json({ message: 'Missing osu! state or pollToken.' });
+    return;
+  }
+  try {
+    const lookup = await getOsuAuthSessionForPoll(state, pollToken);
+    if (lookup.kind === 'expired') {
+      response.status(200).json({
+        status: 'expired',
+        message: 'osu! sign-in session expired. Please try again.',
+      });
+      return;
+    }
+    if (lookup.kind === 'unauthorized') {
+      response.status(403).json({ message: 'Invalid osu! sign-in poll token.' });
+      return;
+    }
+    const { session } = lookup;
+    if (session.status === 'completed' && session.exchangeCode) {
+      response.status(200).json({ status: 'completed', code: session.exchangeCode });
+      return;
+    }
+    if (session.status === 'cancelled' || session.status === 'error') {
+      response.status(200).json({
+        status: session.status,
+        message: session.errorMessage || 'osu! sign-in failed.',
+      });
+      return;
+    }
+    response.status(200).json({ status: 'pending' });
+  } catch (error) {
+    console.error('Unable to check osu! SSO status:', error);
+    response.status(500).json({ message: 'Unable to check osu! Sign-In status.' });
+  }
+});
+
+app.post('/auth/osu/cancel', async (request, response) => {
+  const body: unknown = request.body;
+  if (
+    !isRecord(body) ||
+    typeof body.state !== 'string' ||
+    body.state.trim().length === 0 ||
+    typeof body.pollToken !== 'string' ||
+    body.pollToken.trim().length === 0
+  ) {
+    response.status(400).json({
+      message: 'osu! sign-in state and pollToken are required.',
+    });
+    return;
+  }
+  try {
+    const result = await cancelOsuAuthSession(
+      body.state.trim(),
+      body.pollToken.trim(),
+    );
+    if (result.kind === 'expired') {
+      response.status(200).json({ status: 'expired', cancelled: false });
+      return;
+    }
+    if (result.kind === 'unauthorized') {
+      response.status(403).json({ message: 'Invalid osu! sign-in poll token.' });
+      return;
+    }
+    response.status(200).json({
+      status: result.status,
+      cancelled: result.cancelled,
+    });
+  } catch (error) {
+    console.error('Unable to cancel osu! SSO:', error);
+    response.status(500).json({ message: 'Unable to cancel osu! Sign-In.' });
+  }
+});
+
 app.get('/auth/me', async (request, response) => {
   const userId = authenticateRequest(request, response);
 
@@ -842,7 +1070,12 @@ app.patch('/auth/profile', async (request, response) => {
     const isLocalAccount = user.authProvider === 'local';
 
     if (hasNewPassword && (!isLocalAccount || !user.password)) {
-      const provider = user.authProvider === 'strava' ? 'Strava' : 'Steam';
+      const provider =
+        user.authProvider === 'strava'
+          ? 'Strava'
+          : user.authProvider === 'osu'
+            ? 'OSU'
+            : 'Steam';
       response.status(400).json({
         message: `Password changes are not available for ${provider} Sign-In accounts.`,
       });
@@ -987,13 +1220,17 @@ app.get('/auth/ratings', async (request, response) => {
     ];
     const raterUsers = raterIds.length
       ? await User.find({ _id: { $in: raterIds } })
-          .select('name username steamUsername stravaUsername')
+          .select('name username steamUsername stravaUsername osuUsername')
           .lean()
       : [];
     const raterMap = new Map(
       raterUsers.map((rater) => [
         String(rater._id),
-        rater.name || rater.steamUsername || rater.stravaUsername || rater.username,
+        rater.name ||
+          rater.steamUsername ||
+          rater.stravaUsername ||
+          rater.osuUsername ||
+          rater.username,
       ]),
     );
 
@@ -2446,6 +2683,8 @@ type SerializedUser = {
   steamAvatar: string | null;
   stravaUsername: string | null;
   stravaAvatar: string | null;
+  osuUsername: string | null;
+  osuAvatar: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   crispinessRating: number | null;
@@ -2487,6 +2726,8 @@ function serializeUser(user: {
   steamAvatar?: string | null;
   stravaUsername?: string | null;
   stravaAvatar?: string | null;
+  osuUsername?: string | null;
+  osuAvatar?: string | null;
   activeMode?: AppMode;
   offeredServices?: DapService[];
   crispinessRatingTotal?: number;
@@ -2503,13 +2744,17 @@ function serializeUser(user: {
     authProvider:
       user.authProvider === 'strava'
         ? 'strava'
-        : user.authProvider === 'steam'
-          ? 'steam'
-          : 'local',
+        : user.authProvider === 'osu'
+          ? 'osu'
+          : user.authProvider === 'steam'
+            ? 'steam'
+            : 'local',
     steamUsername: user.steamUsername ?? null,
     steamAvatar: user.steamAvatar ?? null,
     stravaUsername: user.stravaUsername ?? null,
     stravaAvatar: user.stravaAvatar ?? null,
+    osuUsername: user.osuUsername ?? null,
+    osuAvatar: user.osuAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
     offeredServices: (user.offeredServices ?? []).filter(isDapService),
     crispinessRating:
@@ -2808,6 +3053,57 @@ function resolveStravaRedirectUri(request: Request): string {
   return callbackUrl.toString();
 }
 
+function resolveOsuRedirectUri(request: Request): string {
+  const configured = process.env.OSU_REDIRECT_URI?.trim();
+  if (configured) {
+    const parsed = isValidHttpUrl(configured);
+    if (!parsed) {
+      throw new OsuAuthConfigError(
+        'OSU_REDIRECT_URI must be a valid http(s) URL.',
+      );
+    }
+    if (
+      parsed.pathname !== '/auth/osu/callback' ||
+      parsed.search.length > 0 ||
+      parsed.hash.length > 0
+    ) {
+      throw new OsuAuthConfigError(
+        'OSU_REDIRECT_URI must use the /auth/osu/callback path without query or fragment.',
+      );
+    }
+    return parsed.toString();
+  }
+
+  const publicBackendUrl = process.env.PUBLIC_BACKEND_URL?.trim();
+  if (publicBackendUrl) {
+    const parsedPublic = isValidHttpUrl(publicBackendUrl);
+    if (!parsedPublic) {
+      throw new OsuAuthConfigError(
+        'PUBLIC_BACKEND_URL must be a valid http(s) URL.',
+      );
+    }
+    return `${parsedPublic.toString().replace(/\/+$/, '')}/auth/osu/callback`;
+  }
+
+  const forwardedProto = request
+    .get('x-forwarded-proto')
+    ?.split(',')[0]
+    ?.trim();
+  const protocol = forwardedProto || request.protocol || 'http';
+  const host =
+    request.get('x-forwarded-host')?.split(',')[0]?.trim() ||
+    request.get('host') ||
+    `localhost:${port}`;
+  const callbackUrl = isValidHttpUrl(`${protocol}://${host}/auth/osu/callback`);
+  if (!callbackUrl) {
+    throw new OsuAuthFlowError(
+      'Unable to resolve a valid osu! callback URL.',
+      400,
+    );
+  }
+  return callbackUrl.toString();
+}
+
 function resolveSafeReturnTo(rawReturnTo: string | null): string | null {
   if (!rawReturnTo) {
     return null;
@@ -2918,6 +3214,40 @@ function sendStravaCallbackError(
       .status(400)
       .type('html')
       .send(renderSteamCallbackHtml('Strava Sign-In Failed', message, deepLinkTarget));
+}
+
+function buildNativeOsuDeepLink(
+    returnTo: string | null,
+    params: Record<string, string>,
+): string {
+    const baseUrl =
+      returnTo && !isHttpUrl(returnTo) ? returnTo : 'uberdaps://auth/osu';
+    const target = new URL(baseUrl);
+    for (const [key, value] of Object.entries(params)) {
+      target.searchParams.set(key, value);
+    }
+    return target.toString();
+}
+
+function sendOsuCallbackError(
+    response: Response,
+    returnTo: string | null,
+    message: string,
+): void {
+    if (returnTo && isHttpUrl(returnTo)) {
+      const target = new URL(returnTo);
+      target.searchParams.set('osu_error', message);
+      response.redirect(302, target.toString());
+      return;
+    }
+
+    const deepLinkTarget = buildNativeOsuDeepLink(returnTo, {
+      osu_error: message,
+    });
+    response
+      .status(400)
+      .type('html')
+      .send(renderSteamCallbackHtml('osu! Sign-In Failed', message, deepLinkTarget));
 }
 
 function escapeHtml(value: string): string {
@@ -3123,6 +3453,74 @@ async function findOrCreateStravaUser(profile: StravaUserProfile) {
     stravaId: profile.stravaId,
     stravaUsername: profile.stravaUsername,
     stravaAvatar: profile.stravaAvatar,
+    activeMode: 'order',
+    hasCompletedOnboarding: false,
+  });
+}
+
+async function findOrCreateOsuUser(profile: OsuUserProfile) {
+  let user = await User.findOne({ osuId: profile.osuId });
+  if (user) {
+    let dirty = false;
+    if (user.authProvider !== 'osu') {
+      user.authProvider = 'osu';
+      dirty = true;
+    }
+    if (user.osuUsername !== profile.osuUsername) {
+      user.osuUsername = profile.osuUsername;
+      dirty = true;
+    }
+    if (profile.osuAvatar && user.osuAvatar !== profile.osuAvatar) {
+      user.osuAvatar = profile.osuAvatar;
+      dirty = true;
+    }
+    if (dirty) {
+      await user.save();
+    }
+    return user;
+  }
+
+  const baseUsername = sanitizeBaseUsername(
+    profile.osuUsername,
+    'osu_player',
+  );
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const suffix =
+      attempt === 0 ? '' : attempt === 1 ? '_osu' : `_osu_${attempt}`;
+    const maxBaseLength = 40 - suffix.length;
+    const candidate = `${baseUsername.slice(0, maxBaseLength)}${suffix}`;
+    try {
+      return await User.create({
+        username: candidate,
+        authProvider: 'osu',
+        osuId: profile.osuId,
+        osuUsername: profile.osuUsername,
+        osuAvatar: profile.osuAvatar,
+        activeMode: 'order',
+        hasCompletedOnboarding: false,
+      });
+    } catch (error) {
+      if (isDuplicateUsernameError(error)) {
+        const existingByOsuId = await User.findOne({
+          osuId: profile.osuId,
+        });
+        if (existingByOsuId) {
+          return existingByOsuId;
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  const randomSuffix = `_${Date.now().toString(36)}`;
+  const fallbackUsername = `${baseUsername.slice(0, 40 - randomSuffix.length)}${randomSuffix}`;
+  return User.create({
+    username: fallbackUsername,
+    authProvider: 'osu',
+    osuId: profile.osuId,
+    osuUsername: profile.osuUsername,
+    osuAvatar: profile.osuAvatar,
     activeMode: 'order',
     hasCompletedOnboarding: false,
   });

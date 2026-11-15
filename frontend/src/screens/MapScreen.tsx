@@ -118,6 +118,8 @@ type MapScreenProps = {
   steamUsername?: string | null;
   stravaAvatar?: string | null;
   stravaUsername?: string | null;
+  osuAvatar?: string | null;
+  osuUsername?: string | null;
   error: string | null;
   isChangingMode: boolean;
   isSavingPreferences: boolean;
@@ -161,6 +163,8 @@ export default function MapScreen({
   steamUsername = null,
   stravaAvatar = null,
   stravaUsername = null,
+  osuAvatar = null,
+  osuUsername = null,
   error,
   isChangingMode,
   isSavingPreferences,
@@ -428,7 +432,7 @@ export default function MapScreen({
 
   useEffect(() => {
     setAvatarLoadFailed(false);
-  }, [steamAvatar, stravaAvatar]);
+  }, [steamAvatar, stravaAvatar, osuAvatar]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1546,18 +1550,18 @@ export default function MapScreen({
             </Pressable>
             {isMenuOpen ? (
               <View style={styles.menu}>
-                {name || steamUsername || stravaUsername || username ? (
+                {name || steamUsername || stravaUsername || osuUsername || username ? (
                   <View style={styles.menuAccountHeader}>
-                    {(steamAvatar || stravaAvatar) && !avatarLoadFailed ? (
+                    {(steamAvatar || stravaAvatar || osuAvatar) && !avatarLoadFailed ? (
                       <Image
                         onError={() => setAvatarLoadFailed(true)}
-                        source={{ uri: steamAvatar || stravaAvatar || undefined }}
+                        source={{ uri: steamAvatar || stravaAvatar || osuAvatar || undefined }}
                         style={styles.menuAvatar}
                       />
                     ) : null}
                     <View style={styles.menuAccountText}>
                       <Text numberOfLines={1} style={styles.menuUsername}>
-                        {name || steamUsername || stravaUsername || username}
+                        {name || steamUsername || stravaUsername || osuUsername || username}
                       </Text>
                       {name && username ? (
                         <Text numberOfLines={1} style={styles.menuSubUsername}>
@@ -1566,7 +1570,11 @@ export default function MapScreen({
                       ) : null}
                       {authProvider !== 'local' ? (
                         <Text style={styles.menuProviderBadge}>
-                          {authProvider === 'strava' ? 'Strava' : 'Steam'}
+                          {authProvider === 'strava'
+                            ? 'Strava'
+                            : authProvider === 'osu'
+                              ? 'OSU'
+                              : 'Steam'}
                         </Text>
                       ) : null}
                       {isDapperMode || crispinessRatingCount > 0 ? (
@@ -2362,7 +2370,7 @@ export default function MapScreen({
                   <View style={styles.securityBadge}>
                     <Text style={styles.securityBadgeText}>
                       {authProvider !== 'local'
-                        ? `${authProvider === 'strava' ? 'Strava' : 'Steam'} SSO`
+                        ? `${authProvider === 'strava' ? 'Strava' : authProvider === 'osu' ? 'OSU' : 'Steam'} SSO`
                         : 'Encrypted Auth'}
                     </Text>
                   </View>
@@ -2447,7 +2455,7 @@ export default function MapScreen({
 
                 {authProvider !== 'local' ? (
                   <Text style={styles.steamSecurityNote}>
-                    Signed in with {authProvider === 'strava' ? 'Strava' : 'Steam'}. Password changes are managed by your provider.
+                    Signed in with {authProvider === 'strava' ? 'Strava' : authProvider === 'osu' ? 'OSU' : 'Steam'}. Password changes are managed by your provider.
                   </Text>
                 ) : (
                   <View style={styles.changePasswordSection}>
