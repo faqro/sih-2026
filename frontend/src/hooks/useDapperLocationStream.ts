@@ -59,14 +59,27 @@ export function useDapperLocationStream(
     useRef<ReturnType<typeof setInterval> | null>(null);
   const latestLocationRef = useRef<Coordinates | null>(null);
   const isOnlineRef = useRef(false);
+  const shouldStayOnlineRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
   const isMountedRef = useRef(false);
   const isEnabledRef = useRef(enabled);
   const onRatingReceivedRef = useRef(onRatingReceived);
   const serverMessageHandlerRef = useRef<
     (message: Record<string, unknown>) => void
   >(() => {});
+  const connectAndStreamRef = useRef<
+    (initialLocation: Coordinates, isReconnect: boolean) => Promise<void>
+  >(async () => {});
   isEnabledRef.current = enabled;
   onRatingReceivedRef.current = onRatingReceived;
+
+  const stopReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
 
   const stopLocationHeartbeat = useCallback(() => {
     if (locationHeartbeatRef.current) {
@@ -76,8 +89,11 @@ export function useDapperLocationStream(
   }, []);
 
   const stopStreaming = useCallback(() => {
+    shouldStayOnlineRef.current = false;
     isOnlineRef.current = false;
+    reconnectAttemptsRef.current = 0;
     latestLocationRef.current = null;
+    stopReconnectTimer();
     stopLocationHeartbeat();
     if (isMountedRef.current) {
       setIsOnline(false);
@@ -92,20 +108,52 @@ export function useDapperLocationStream(
     if (socket && socket.readyState < WebSocket.CLOSING) {
       socket.close(1000, 'Dapper went offline.');
     }
-  }, [stopLocationHeartbeat]);
+  }, [stopLocationHeartbeat, stopReconnectTimer]);
 
   const handleConnectionClosed = useCallback(
-    (socket: WebSocket) => {
+    (socket: WebSocket, code?: number) => {
       if (socketRef.current !== socket) {
         return;
       }
 
       socketRef.current = null;
-      isOnlineRef.current = false;
-      latestLocationRef.current = null;
       stopLocationHeartbeat();
       locationSubscriptionRef.current?.remove();
       locationSubscriptionRef.current = null;
+
+      const canReconnect =
+        shouldStayOnlineRef.current &&
+        isMountedRef.current &&
+        isEnabledRef.current &&
+        code !== 1000 &&
+        code !== 1008 &&
+        code !== 4001 &&
+        latestLocationRef.current !== null &&
+        reconnectAttemptsRef.current < 5;
+
+      if (canReconnect) {
+        const delayMs = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 10000);
+        reconnectAttemptsRef.current += 1;
+        stopReconnectTimer();
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          const lastLocation = latestLocationRef.current;
+          if (
+            shouldStayOnlineRef.current &&
+            isMountedRef.current &&
+            isEnabledRef.current &&
+            lastLocation
+          ) {
+            void connectAndStreamRef.current(lastLocation, true);
+          }
+        }, delayMs);
+        return;
+      }
+
+      shouldStayOnlineRef.current = false;
+      isOnlineRef.current = false;
+      reconnectAttemptsRef.current = 0;
+      latestLocationRef.current = null;
 
       if (isMountedRef.current) {
         setIsOnline(false);
@@ -113,11 +161,15 @@ export function useDapperLocationStream(
         setIsResponding(false);
         setOffer(null);
         if (isEnabledRef.current) {
-          setConnectionError('Connection lost. Tap Go Online to reconnect.');
+          setConnectionError(
+            code === 4001
+              ? 'Signed in from another session. Tap Go Online to reconnect.'
+              : 'Connection lost. Tap Go Online to reconnect.',
+          );
         }
       }
     },
-    [stopLocationHeartbeat],
+    [stopLocationHeartbeat, stopReconnectTimer],
   );
 
   const sendLocation = useCallback(
@@ -155,6 +207,39 @@ export function useDapperLocationStream(
   }, [stopStreaming]);
 
   useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState !== 'visible' ||
+        !shouldStayOnlineRef.current ||
+        !isEnabledRef.current
+      ) {
+        return;
+      }
+
+      const socket = socketRef.current;
+      const latestLocation = latestLocationRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN && latestLocation) {
+        sendLocation(socket, latestLocation);
+      } else if (
+        (!socket || socket.readyState >= WebSocket.CLOSING) &&
+        latestLocation &&
+        !reconnectTimerRef.current
+      ) {
+        void connectAndStreamRef.current(latestLocation, true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [sendLocation]);
+
+  useEffect(() => {
     if (!enabled) {
       setConnectionError(null);
       setOffer(null);
@@ -163,104 +248,152 @@ export function useDapperLocationStream(
     }
   }, [enabled, stopStreaming]);
 
-  const goOnline = useCallback(async (initialLocation: Coordinates) => {
-    if (!isEnabledRef.current || isOnlineRef.current) {
-      return;
-    }
-
-    setConnectionError(null);
-    setIsConnecting(true);
-
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-
-      if (!isMountedRef.current || !isEnabledRef.current) {
+  const connectAndStream = useCallback(
+    async (initialLocation: Coordinates, isReconnect: boolean) => {
+      if (!isEnabledRef.current) {
+        return;
+      }
+      if (!isReconnect && isOnlineRef.current) {
         return;
       }
 
-      if (permission.status !== 'granted') {
-        throw new Error('Location permission is required to go online.');
+      if (!isReconnect) {
+        shouldStayOnlineRef.current = true;
+        reconnectAttemptsRef.current = 0;
+        latestLocationRef.current = initialLocation;
+        setConnectionError(null);
+        setIsConnecting(true);
       }
 
-      const socket = new WebSocket(dapperLocationWebSocketUrl);
-      socketRef.current = socket;
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
 
-      await authenticateSocket(socket, token, (message) =>
-        serverMessageHandlerRef.current(message),
-      );
-
-      if (
-        !isMountedRef.current ||
-        !isEnabledRef.current ||
-        socketRef.current !== socket
-      ) {
-        return;
-      }
-
-      socket.onerror = () => handleConnectionClosed(socket);
-      socket.onclose = () => handleConnectionClosed(socket);
-
-      if (socket.readyState !== WebSocket.OPEN) {
-        throw new Error('The location connection closed unexpectedly.');
-      }
-
-      isOnlineRef.current = true;
-      sendLocation(socket, initialLocation);
-
-      const subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.Balanced,
-          distanceInterval: 5,
-          timeInterval: 3000,
-        },
-        (position) => {
-          sendLocation(socket, {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
-        },
-      );
-
-      if (
-        !isMountedRef.current ||
-        !isEnabledRef.current ||
-        socketRef.current !== socket ||
-        !isOnlineRef.current
-      ) {
-        subscription.remove();
-        return;
-      }
-
-      locationSubscriptionRef.current = subscription;
-      setIsOnline(true);
-      stopLocationHeartbeat();
-      locationHeartbeatRef.current = setInterval(() => {
-        const latestLocation = latestLocationRef.current;
-        if (latestLocation) {
-          sendLocation(socket, latestLocation);
+        if (
+          !isMountedRef.current ||
+          !isEnabledRef.current ||
+          !shouldStayOnlineRef.current
+        ) {
+          return;
         }
-      }, 5000);
-    } catch (error) {
-      stopStreaming();
-      if (isMountedRef.current && isEnabledRef.current) {
-        setConnectionError(
-          error instanceof Error
-            ? error.message
-            : 'Unable to start location sharing.',
+
+        if (permission.status !== 'granted') {
+          throw new Error('Location permission is required to go online.');
+        }
+
+        const socket = new WebSocket(dapperLocationWebSocketUrl);
+        socketRef.current = socket;
+
+        await authenticateSocket(socket, token, (message) =>
+          serverMessageHandlerRef.current(message),
         );
+
+        if (
+          !isMountedRef.current ||
+          !isEnabledRef.current ||
+          !shouldStayOnlineRef.current ||
+          socketRef.current !== socket
+        ) {
+          socket.close(1000, 'Dapper went offline.');
+          return;
+        }
+
+        socket.onerror = () => handleConnectionClosed(socket);
+        socket.onclose = (event) => handleConnectionClosed(socket, event.code);
+
+        if (socket.readyState !== WebSocket.OPEN) {
+          throw new Error('The location connection closed unexpectedly.');
+        }
+
+        reconnectAttemptsRef.current = 0;
+        isOnlineRef.current = true;
+        sendLocation(socket, latestLocationRef.current ?? initialLocation);
+
+        const subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            distanceInterval: 5,
+            timeInterval: 3000,
+          },
+          (position) => {
+            sendLocation(socket, {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            });
+          },
+        );
+
+        if (
+          !isMountedRef.current ||
+          !isEnabledRef.current ||
+          !shouldStayOnlineRef.current ||
+          socketRef.current !== socket ||
+          !isOnlineRef.current
+        ) {
+          subscription.remove();
+          return;
+        }
+
+        locationSubscriptionRef.current = subscription;
+        setIsOnline(true);
+        setConnectionError(null);
+        stopLocationHeartbeat();
+        locationHeartbeatRef.current = setInterval(() => {
+          const latestLocation = latestLocationRef.current;
+          if (latestLocation) {
+            sendLocation(socket, latestLocation);
+          }
+        }, 10000);
+      } catch (error) {
+        if (isReconnect && shouldStayOnlineRef.current && reconnectAttemptsRef.current < 5) {
+          const delayMs = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 10000);
+          reconnectAttemptsRef.current += 1;
+          stopReconnectTimer();
+          reconnectTimerRef.current = setTimeout(() => {
+            reconnectTimerRef.current = null;
+            const lastLocation = latestLocationRef.current;
+            if (
+              shouldStayOnlineRef.current &&
+              isMountedRef.current &&
+              isEnabledRef.current &&
+              lastLocation
+            ) {
+              void connectAndStreamRef.current(lastLocation, true);
+            }
+          }, delayMs);
+          return;
+        }
+
+        stopStreaming();
+        if (isMountedRef.current && isEnabledRef.current) {
+          setConnectionError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to start location sharing.',
+          );
+        }
+      } finally {
+        if (!isReconnect && isMountedRef.current) {
+          setIsConnecting(false);
+        }
       }
-    } finally {
-      if (isMountedRef.current) {
-        setIsConnecting(false);
-      }
-    }
-  }, [
-    handleConnectionClosed,
-    sendLocation,
-    stopLocationHeartbeat,
-    stopStreaming,
-    token,
-  ]);
+    },
+    [
+      handleConnectionClosed,
+      sendLocation,
+      stopLocationHeartbeat,
+      stopReconnectTimer,
+      stopStreaming,
+      token,
+    ],
+  );
+  connectAndStreamRef.current = connectAndStream;
+
+  const goOnline = useCallback(
+    async (initialLocation: Coordinates) => {
+      await connectAndStream(initialLocation, false);
+    },
+    [connectAndStream],
+  );
 
   const goOffline = useCallback(() => {
     setConnectionError(null);

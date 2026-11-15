@@ -76,6 +76,7 @@ type DapRequest = {
   dapperId: string | null;
   timeout: ReturnType<typeof setTimeout> | null;
   offerTimeout: ReturnType<typeof setTimeout> | null;
+  disconnectTimeout: ReturnType<typeof setTimeout> | null;
 };
 
 type SocketSession = {
@@ -98,7 +99,10 @@ const activeDappers = new Map<string, ActiveDapper>();
 const activeUserSockets = new Map<string, WebSocket>();
 const dapRequests = new Map<string, DapRequest>();
 const activeRequestIdsByUser = new Map<string, string>();
-const DAPPER_LOCATION_STALE_AFTER_MS = 15_000;
+const DAPPER_LOCATION_STALE_AFTER_MS = 180_000;
+const WS_HEARTBEAT_INTERVAL_MS = 20_000;
+const ORDER_DISCONNECT_GRACE_MS = 15_000;
+const socketAliveState = new WeakMap<WebSocket, boolean>();
 
 server.on('upgrade', (request, socket, head) => {
   let pathname: string;
@@ -121,6 +125,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 webSocketServer.on('connection', (socket) => {
+  socketAliveState.set(socket, true);
   const session: SocketSession = {
     userId: null,
     username: null,
@@ -128,7 +133,18 @@ webSocketServer.on('connection', (socket) => {
     isAuthenticating: false,
   };
 
+  socket.on('pong', () => {
+    socketAliveState.set(socket, true);
+    if (session.userId && session.activeMode === 'dapper') {
+      const dapper = activeDappers.get(session.userId);
+      if (dapper && dapper.socket === socket && dapper.location !== null) {
+        dapper.lastLocationAt = Date.now();
+      }
+    }
+  });
+
   socket.on('message', (data, isBinary) => {
+    socketAliveState.set(socket, true);
     if (isBinary) {
       socket.close(1003, 'Text messages are required.');
       return;
@@ -167,6 +183,24 @@ webSocketServer.on('connection', (socket) => {
   socket.on('error', (error) => {
     console.error('Dapper location WebSocket error:', error);
   });
+});
+
+const webSocketHeartbeatInterval = setInterval(() => {
+  for (const socket of webSocketServer.clients) {
+    if (socketAliveState.get(socket) === false) {
+      socket.terminate();
+      continue;
+    }
+
+    socketAliveState.set(socket, false);
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.ping();
+    }
+  }
+}, WS_HEARTBEAT_INTERVAL_MS);
+
+webSocketServer.on('close', () => {
+  clearInterval(webSocketHeartbeatInterval);
 });
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN ?? true }));
@@ -1481,7 +1515,11 @@ async function handleRealtimeMessage(
     }
 
     const previousSocket = activeUserSockets.get(user.id);
-    if (previousSocket && previousSocket !== socket) {
+    if (
+      previousSocket &&
+      previousSocket !== socket &&
+      message.restoreRequestState !== true
+    ) {
       const activeRequestId = activeRequestIdsByUser.get(user.id);
       const activeRequest = activeRequestId
         ? dapRequests.get(activeRequestId)
@@ -1503,6 +1541,10 @@ async function handleRealtimeMessage(
         ? dapRequests.get(activeRequestId)
         : undefined;
       if (activeRequest) {
+        if (activeRequest.disconnectTimeout) {
+          clearTimeout(activeRequest.disconnectTimeout);
+          activeRequest.disconnectTimeout = null;
+        }
         activeRequest.userSocket = socket;
         sendUserRequestState(activeRequest);
       } else {
@@ -1512,6 +1554,17 @@ async function handleRealtimeMessage(
         });
       }
     }
+    return;
+  }
+
+  if (message.type === 'ping') {
+    if (session.activeMode === 'dapper') {
+      const dapper = activeDappers.get(session.userId);
+      if (dapper && dapper.socket === socket && dapper.location !== null) {
+        dapper.lastLocationAt = Date.now();
+      }
+    }
+    sendWebSocketMessage(socket, { type: 'pong' });
     return;
   }
 
@@ -1696,6 +1749,7 @@ function createDapRequest(
     dapperId: null,
     timeout: null,
     offerTimeout: null,
+    disconnectTimeout: null,
   };
 
   request.timeout = setTimeout(
@@ -2112,6 +2166,9 @@ function removeDapRequest(request: DapRequest): void {
   if (request.offerTimeout) {
     clearTimeout(request.offerTimeout);
   }
+  if (request.disconnectTimeout) {
+    clearTimeout(request.disconnectTimeout);
+  }
   dapRequests.delete(request.id);
   if (activeRequestIdsByUser.get(request.userId) === request.id) {
     activeRequestIdsByUser.delete(request.userId);
@@ -2159,7 +2216,16 @@ function handleOrderSocketDisconnect(userId: string, socket: WebSocket): void {
   const requestId = activeRequestIdsByUser.get(userId);
   const request = requestId ? dapRequests.get(requestId) : undefined;
   if (request?.status === 'pending') {
-    cancelDapRequest(request, 'User disconnected.', false);
+    request.userSocket = null;
+    if (request.disconnectTimeout) {
+      clearTimeout(request.disconnectTimeout);
+    }
+    request.disconnectTimeout = setTimeout(() => {
+      request.disconnectTimeout = null;
+      if (request.status === 'pending' && request.userSocket === null) {
+        cancelDapRequest(request, 'User disconnected.', false);
+      }
+    }, ORDER_DISCONNECT_GRACE_MS);
   } else if (request) {
     request.userSocket = null;
   }
