@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   Image,
   Platform,
@@ -9,6 +10,10 @@ import {
   View,
   type ImageSourcePropType,
 } from 'react-native';
+
+import AnimatedDapHands, {
+  type AnimatedDapHandsHandle,
+} from '../components/AnimatedDapHands';
 
 export type SocialProvider = 'steam' | 'strava' | 'spotify' | 'osu' | 'chess';
 
@@ -68,6 +73,15 @@ export default function WelcomeScreen({
   onPressProvider,
   onPressSignup,
 }: WelcomeScreenProps) {
+  const dapHandsRef = useRef<AnimatedDapHandsHandle>(null);
+
+  function handleTriggerAndProceed(callback: () => void) {
+    void dapHandsRef.current?.triggerDap();
+    setTimeout(() => {
+      callback();
+    }, 280);
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -81,19 +95,14 @@ export default function WelcomeScreen({
         </View>
 
         <View style={styles.heroContainer}>
-          <Image
-            accessibilityLabel="Two hands reaching for a dap"
-            resizeMode="contain"
-            source={require('../../assets/dap-hands.png')}
-            style={styles.heroImage}
-          />
+          <AnimatedDapHands ref={dapHandsRef} />
         </View>
 
         <View style={styles.actionsSection}>
           <View style={styles.primaryButtons}>
             <Pressable
               accessibilityRole="button"
-              onPress={onPressLogin}
+              onPress={() => handleTriggerAndProceed(onPressLogin)}
               style={({ pressed }) => [
                 styles.primaryButton,
                 pressed && styles.buttonPressed,
@@ -104,7 +113,7 @@ export default function WelcomeScreen({
 
             <Pressable
               accessibilityRole="button"
-              onPress={onPressSignup}
+              onPress={() => handleTriggerAndProceed(onPressSignup)}
               style={({ pressed }) => [
                 styles.primaryButton,
                 pressed && styles.buttonPressed,
@@ -125,7 +134,9 @@ export default function WelcomeScreen({
               <Pressable
                 key={provider.id}
                 accessibilityRole="button"
-                onPress={() => onPressProvider?.(provider.id)}
+                onPress={() =>
+                  handleTriggerAndProceed(() => onPressProvider?.(provider.id))
+                }
                 style={({ pressed }) => [
                   styles.providerButton,
                   {

@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -25,6 +25,9 @@ import {
   type AuthMode,
   type AuthUser,
 } from './src/api/auth';
+import AnimatedDapHands, {
+  type AnimatedDapHandsHandle,
+} from './src/components/AnimatedDapHands';
 import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
   type OnboardingAction,
@@ -55,6 +58,7 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [onboardingAction, setOnboardingAction] =
     useState<OnboardingAction | null>(null);
+  const formDapHandsRef = useRef<AnimatedDapHandsHandle>(null);
 
   const isLogin = mode === 'login';
 
@@ -122,6 +126,7 @@ export default function App() {
 
     setError(null);
     setIsSubmitting(true);
+    void formDapHandsRef.current?.triggerDap();
 
     try {
       const result = await authenticate(mode, finalUser, finalPass);
@@ -142,6 +147,7 @@ export default function App() {
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
     setError(null);
+    formDapHandsRef.current?.reset();
   }
 
   function openAuthForm(nextMode: AuthMode) {
@@ -344,12 +350,7 @@ export default function App() {
             </View>
 
             <View style={styles.claspedHandsContainer}>
-              <Image
-                accessibilityLabel="Two hands clasping in a dap"
-                resizeMode="contain"
-                source={require('./assets/dap-hands-clasped.png')}
-                style={styles.claspedHandsImage}
-              />
+              <AnimatedDapHands ref={formDapHandsRef} />
             </View>
 
             <Text style={styles.authSectionTitle}>
