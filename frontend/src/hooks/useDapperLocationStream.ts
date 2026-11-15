@@ -3,12 +3,33 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { dapperLocationWebSocketUrl } from '../api/auth';
 
+export type DapperOffer = {
+  requestId: string;
+  service: string;
+  userName: string;
+  location: { latitude: number; longitude: number };
+  distanceKm: number;
+};
+
+export type ActiveDap = {
+  requestId: string;
+  service: string;
+  userName: string;
+  location: { latitude: number; longitude: number };
+};
+
 type DapperLocationStreamState = {
+  acceptOffer: () => void;
+  activeDap: ActiveDap | null;
   connectionError: string | null;
+  declineOffer: () => void;
   goOffline: () => void;
   goOnline: () => Promise<void>;
+  isResponding: boolean;
   isConnecting: boolean;
   isOnline: boolean;
+  offer: DapperOffer | null;
+  markDapDelivered: () => void;
 };
 
 export function useDapperLocationStream(
@@ -17,13 +38,19 @@ export function useDapperLocationStream(
 ): DapperLocationStreamState {
   const [isOnline, setIsOnline] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isResponding, setIsResponding] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [offer, setOffer] = useState<DapperOffer | null>(null);
+  const [activeDap, setActiveDap] = useState<ActiveDap | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const locationSubscriptionRef =
     useRef<Location.LocationSubscription | null>(null);
   const isOnlineRef = useRef(false);
   const isMountedRef = useRef(false);
   const isEnabledRef = useRef(enabled);
+  const serverMessageHandlerRef = useRef<
+    (message: Record<string, unknown>) => void
+  >(() => {});
   isEnabledRef.current = enabled;
 
   const stopStreaming = useCallback(() => {
@@ -57,6 +84,8 @@ export function useDapperLocationStream(
       if (isMountedRef.current) {
         setIsOnline(false);
         setIsConnecting(false);
+        setIsResponding(false);
+        setOffer(null);
         if (isEnabledRef.current) {
           setConnectionError('Connection lost. Tap Go Online to reconnect.');
         }
@@ -77,6 +106,8 @@ export function useDapperLocationStream(
   useEffect(() => {
     if (!enabled) {
       setConnectionError(null);
+      setOffer(null);
+      setIsResponding(false);
       stopStreaming();
     }
   }, [enabled, stopStreaming]);
@@ -103,7 +134,9 @@ export function useDapperLocationStream(
       const socket = new WebSocket(dapperLocationWebSocketUrl);
       socketRef.current = socket;
 
-      await authenticateSocket(socket, token);
+      await authenticateSocket(socket, token, (message) =>
+        serverMessageHandlerRef.current(message),
+      );
 
       if (
         !isMountedRef.current ||
@@ -113,7 +146,6 @@ export function useDapperLocationStream(
         return;
       }
 
-      socket.onmessage = null;
       socket.onerror = () => handleConnectionClosed(socket);
       socket.onclose = () => handleConnectionClosed(socket);
 
@@ -122,7 +154,6 @@ export function useDapperLocationStream(
       }
 
       isOnlineRef.current = true;
-      setIsOnline(true);
 
       const subscription = await Location.watchPositionAsync(
         {
@@ -165,6 +196,7 @@ export function useDapperLocationStream(
       }
 
       locationSubscriptionRef.current = subscription;
+      setIsOnline(true);
     } catch (error) {
       stopStreaming();
       if (isMountedRef.current && isEnabledRef.current) {
@@ -183,19 +215,152 @@ export function useDapperLocationStream(
 
   const goOffline = useCallback(() => {
     setConnectionError(null);
+    setOffer(null);
+    setIsResponding(false);
     stopStreaming();
   }, [stopStreaming]);
 
+  const handleServerMessage = useCallback(
+    (message: Record<string, unknown>) => {
+      if (message.type === 'offer') {
+        const location = readCoordinates(message.location);
+        if (
+          typeof message.requestId === 'string' &&
+          typeof message.service === 'string' &&
+          typeof message.userName === 'string' &&
+          location &&
+          typeof message.distanceKm === 'number'
+        ) {
+          setOffer({
+            requestId: message.requestId,
+            service: message.service,
+            userName: message.userName,
+            location,
+            distanceKm: message.distanceKm,
+          });
+          setIsResponding(false);
+        }
+        return;
+      }
+
+      if (message.type === 'offer_cancelled' || message.type === 'offer_expired') {
+        setOffer((current) =>
+          current?.requestId === message.requestId ? null : current,
+        );
+        setIsResponding(false);
+        return;
+      }
+
+      if (message.type === 'active_request') {
+        const location = readCoordinates(message.location);
+        if (
+          typeof message.requestId === 'string' &&
+          typeof message.service === 'string' &&
+          typeof message.userName === 'string' &&
+          location
+        ) {
+          setActiveDap({
+            requestId: message.requestId,
+            service: message.service,
+            userName: message.userName,
+            location,
+          });
+          setOffer(null);
+          setIsResponding(false);
+        }
+        return;
+      }
+
+      if (message.type === 'request_cancelled') {
+        setActiveDap((current) =>
+          current?.requestId === message.requestId ? null : current,
+        );
+        setIsResponding(false);
+        return;
+      }
+
+      if (message.type === 'dap_delivered') {
+        setActiveDap((current) =>
+          current?.requestId === message.requestId ? null : current,
+        );
+        setIsResponding(false);
+      }
+    },
+    [],
+  );
+  serverMessageHandlerRef.current = handleServerMessage;
+
+  const respondToOffer = useCallback(
+    (type: 'accept' | 'decline') => {
+      const currentOffer = offer;
+      const socket = socketRef.current;
+      if (
+        !currentOffer ||
+        !socket ||
+        socket.readyState !== WebSocket.OPEN ||
+        isResponding
+      ) {
+        return;
+      }
+
+      setIsResponding(true);
+      try {
+        socket.send(
+          JSON.stringify({ type, requestId: currentOffer.requestId }),
+        );
+      } catch {
+        handleConnectionClosed(socket);
+        return;
+      }
+      if (type === 'decline') {
+        setOffer(null);
+        setIsResponding(false);
+      }
+    },
+    [handleConnectionClosed, isResponding, offer],
+  );
+
+  const markDapDelivered = useCallback(() => {
+    const socket = socketRef.current;
+    if (
+      !activeDap ||
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      isResponding
+    ) {
+      return;
+    }
+
+    setIsResponding(true);
+    try {
+      socket.send(
+        JSON.stringify({ type: 'delivered', requestId: activeDap.requestId }),
+      );
+    } catch {
+      handleConnectionClosed(socket);
+    }
+  }, [activeDap, handleConnectionClosed, isResponding]);
+
   return {
+    acceptOffer: () => respondToOffer('accept'),
+    activeDap,
     connectionError,
+    declineOffer: () => respondToOffer('decline'),
     goOffline,
     goOnline,
+    isResponding,
     isConnecting,
     isOnline,
+    offer,
+    markDapDelivered,
   };
 }
 
-function authenticateSocket(socket: WebSocket, token: string): Promise<void> {
+function authenticateSocket(
+  socket: WebSocket,
+  token: string,
+  onMessage: (message: Record<string, unknown>) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     let isSettled = false;
     let timeout: ReturnType<typeof setTimeout>;
@@ -228,22 +393,16 @@ function authenticateSocket(socket: WebSocket, token: string): Promise<void> {
     };
 
     socket.onmessage = (event) => {
-      let message: unknown;
-
-      try {
-        message = JSON.parse(String(event.data));
-      } catch {
+      const message = parseServerMessage(event.data);
+      if (!message) {
         finish(new Error('The location service sent an invalid response.'));
         return;
       }
 
-      if (
-        typeof message === 'object' &&
-        message !== null &&
-        'type' in message &&
-        message.type === 'authenticated'
-      ) {
+      if (message.type === 'authenticated') {
         finish();
+      } else if (isSettled) {
+        onMessage(message);
       } else {
         finish(new Error('Unable to authenticate the location connection.'));
       }
@@ -257,4 +416,31 @@ function authenticateSocket(socket: WebSocket, token: string): Promise<void> {
       finish(new Error('The location service closed the connection.'));
     };
   });
+}
+
+function parseServerMessage(data: unknown): Record<string, unknown> | null {
+  try {
+    const message = JSON.parse(String(data));
+    return typeof message === 'object' && message !== null
+      ? message as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readCoordinates(value: unknown): { latitude: number; longitude: number } | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  if (
+    !('latitude' in value) ||
+    !('longitude' in value) ||
+    typeof value.latitude !== 'number' ||
+    typeof value.longitude !== 'number'
+  ) {
+    return null;
+  }
+
+  return { latitude: value.latitude, longitude: value.longitude };
 }

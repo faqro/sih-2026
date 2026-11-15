@@ -11,7 +11,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import type { AppMode } from '../api/auth';
+import type { AppMode, DapService } from '../api/auth';
+import { useDapRequest } from '../hooks/useDapRequest';
 import { useDapperLocationStream } from '../hooks/useDapperLocationStream';
 import MapSurface from './MapSurface';
 
@@ -21,9 +22,14 @@ type DapOption = (typeof dapOptions)[number];
 type MapScreenProps = {
   activeMode: AppMode;
   error: string | null;
+  isSavingPreferences: boolean;
   isSubmitting: boolean;
+  offeredServices: DapService[];
   onChangeMode: (nextMode: AppMode) => void;
   onDeleteAccount: () => void;
+  onSaveDapperPreferences: (
+    offeredServices: DapService[],
+  ) => Promise<boolean>;
   onSignOut: () => void;
   token: string;
 };
@@ -41,9 +47,12 @@ const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
 export default function MapScreen({
   activeMode,
   error,
+  isSavingPreferences,
   isSubmitting,
+  offeredServices,
   onChangeMode,
   onDeleteAccount,
+  onSaveDapperPreferences,
   onSignOut,
   token,
 }: MapScreenProps) {
@@ -53,26 +62,52 @@ export default function MapScreen({
   const [attempt, setAttempt] = useState(0);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRequestMenuOpen, setIsRequestMenuOpen] = useState(false);
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+  const [selectedServices, setSelectedServices] =
+    useState<DapService[]>(offeredServices);
   const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
-  const [matchDeadline, setMatchDeadline] = useState<number | null>(null);
-  const [matchSecondsRemaining, setMatchSecondsRemaining] = useState(600);
   const [showMatchToast, setShowMatchToast] = useState(false);
+  const [isDapperSheetOpen, setIsDapperSheetOpen] = useState(false);
   const { height: viewportHeight } = useWindowDimensions();
   const sheetHeight = viewportHeight / 2;
   const sheetProgress = useRef(new Animated.Value(0)).current;
-  const matchExpiredRef = useRef(false);
+  const preferencesProgress = useRef(new Animated.Value(0)).current;
+  const dapperSheetProgress = useRef(new Animated.Value(0)).current;
+  const dapperContentRef = useRef(false);
+  const dapperSheetOpenRef = useRef(false);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetTranslateY = sheetProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [sheetHeight, 0],
   });
+  const preferencesTranslateY = preferencesProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [sheetHeight, 0],
+  });
+  const dapperSheetTranslateY = dapperSheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [sheetHeight, 0],
+  });
+  const dapRequest = useDapRequest(token, activeMode === 'order');
   const {
+    acceptOffer,
+    activeDap,
     connectionError,
+    declineOffer,
     goOffline,
     goOnline,
+    isResponding,
     isConnecting,
     isOnline,
-  } = useDapperLocationStream(token, activeMode === 'dapper');
+    markDapDelivered,
+    offer,
+  } = useDapperLocationStream(
+    token,
+    activeMode === 'dapper' && offeredServices.length > 0,
+  );
+  const hasDapperContent =
+    activeMode === 'dapper' && (offer !== null || activeDap !== null);
+  dapperContentRef.current = hasDapperContent;
 
   useEffect(() => {
     let isActive = true;
@@ -124,35 +159,63 @@ export default function MapScreen({
   }, [attempt]);
 
   useEffect(() => {
-    if (matchDeadline === null) {
-      return;
+    setSelectedServices(offeredServices);
+  }, [offeredServices]);
+
+  useEffect(() => {
+    if (
+      (dapRequest.status === 'connecting' ||
+        dapRequest.status === 'searching' ||
+        dapRequest.status === 'matched') &&
+      !isRequestMenuOpen
+    ) {
+      openRequestMenu();
     }
 
-    const updateCountdown = () => {
-      const secondsRemaining = Math.max(
-        0,
-        Math.ceil((matchDeadline - Date.now()) / 1000),
-      );
-      setMatchSecondsRemaining(secondsRemaining);
-
-      if (secondsRemaining === 0 && !matchExpiredRef.current) {
-        matchExpiredRef.current = true;
-        setMatchDeadline(null);
+    if (dapRequest.status === 'failed') {
+      if (dapRequest.error === null) {
         setShowMatchToast(true);
+        if (toastTimeoutRef.current) {
+          clearTimeout(toastTimeoutRef.current);
+        }
         toastTimeoutRef.current = setTimeout(() => {
           setShowMatchToast(false);
           toastTimeoutRef.current = null;
         }, 3000);
       }
-    };
 
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
+      if (!isRequestMenuOpen) {
+        openRequestMenu();
+      }
+    }
+  }, [dapRequest.error, dapRequest.status]);
 
-    return () => {
-      clearInterval(interval);
-    };
-  }, [matchDeadline]);
+  useEffect(() => {
+    if (hasDapperContent) {
+      dapperSheetOpenRef.current = true;
+      setIsDapperSheetOpen(true);
+      Animated.spring(dapperSheetProgress, {
+        toValue: 1,
+        useNativeDriver: true,
+        damping: 22,
+        stiffness: 160,
+      }).start();
+      return;
+    }
+
+    if (dapperSheetOpenRef.current) {
+      Animated.timing(dapperSheetProgress, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished && !dapperContentRef.current) {
+          dapperSheetOpenRef.current = false;
+          setIsDapperSheetOpen(false);
+        }
+      });
+    }
+  }, [dapperSheetProgress, hasDapperContent]);
 
   useEffect(
     () => () => {
@@ -175,8 +238,7 @@ export default function MapScreen({
   }
 
   function closeRequestMenu() {
-    setMatchDeadline(null);
-    setMatchSecondsRemaining(600);
+    dapRequest.cancelRequest();
     Animated.timing(sheetProgress, {
       toValue: 0,
       duration: 220,
@@ -188,6 +250,57 @@ export default function MapScreen({
     });
   }
 
+  function openPreferences() {
+    setIsMenuOpen(false);
+    setSelectedServices(offeredServices);
+    setIsPreferencesOpen(true);
+    preferencesProgress.setValue(0);
+    Animated.timing(preferencesProgress, {
+      toValue: 1,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closePreferences() {
+    Animated.timing(preferencesProgress, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setIsPreferencesOpen(false);
+      }
+    });
+  }
+
+  function toggleService(service: DapService) {
+    setSelectedServices((current) =>
+      current.includes(service)
+        ? current.filter((item) => item !== service)
+        : [...current, service],
+    );
+  }
+
+  async function savePreferences() {
+    if (selectedServices.length === 0 || isSavingPreferences) {
+      return;
+    }
+
+    if (await onSaveDapperPreferences(selectedServices)) {
+      closePreferences();
+    }
+  }
+
+  function selectMapMode(nextMode: AppMode) {
+    if (nextMode === 'dapper' && offeredServices.length === 0) {
+      openPreferences();
+      return;
+    }
+
+    onChangeMode(nextMode);
+  }
+
   function confirmRequest() {
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
@@ -195,29 +308,45 @@ export default function MapScreen({
     }
 
     setShowMatchToast(false);
-    matchExpiredRef.current = false;
-    setMatchSecondsRemaining(600);
-    setMatchDeadline(Date.now() + 10 * 60 * 1000);
+    if (location) {
+      void dapRequest.startRequest(selectedDap, location);
+    }
   }
 
   function toggleDapperAvailability() {
     if (isOnline) {
       goOffline();
+    } else if (offeredServices.length === 0) {
+      openPreferences();
     } else {
       void goOnline();
     }
   }
 
-  const matchMinutesRemaining = Math.ceil(matchSecondsRemaining / 60);
-  const formattedMinutes = Math.floor(matchSecondsRemaining / 60);
-  const formattedSeconds = String(matchSecondsRemaining % 60).padStart(2, '0');
+  const matchMinutesRemaining = Math.ceil(dapRequest.secondsRemaining / 60);
+  const formattedMinutes = Math.floor(dapRequest.secondsRemaining / 60);
+  const formattedSeconds = String(dapRequest.secondsRemaining % 60).padStart(
+    2,
+    '0',
+  );
   const formattedSecondsRemaining = `${formattedMinutes}:${formattedSeconds}`;
+  const requestInProgress =
+    dapRequest.status === 'connecting' ||
+    dapRequest.status === 'searching' ||
+    dapRequest.status === 'matched';
+  const mapLocation =
+    activeMode === 'dapper'
+      ? activeDap?.location ?? offer?.location ?? location
+      : location;
 
   return (
     <View style={styles.container}>
       <View style={styles.mapLayer}>
-        {location ? (
-          <MapSurface location={location} mode={activeMode} />
+        {mapLocation ? (
+          <MapSurface
+            location={mapLocation}
+            mode={activeDap || offer ? 'order' : activeMode}
+          />
         ) : (
           <View style={styles.mapPlaceholder} />
         )}
@@ -260,10 +389,21 @@ export default function MapScreen({
                   key={tab.mode}
                   accessibilityRole="button"
                   accessibilityState={{ selected: isSelected }}
-                  onPress={() => onChangeMode(tab.mode)}
+                  disabled={
+                    isSubmitting ||
+                    isSavingPreferences ||
+                    requestInProgress ||
+                    activeDap !== null
+                  }
+                  onPress={() => selectMapMode(tab.mode)}
                   style={[
                     styles.modeTab,
                     isSelected && styles.modeTabSelected,
+                    (isSubmitting ||
+                      isSavingPreferences ||
+                      requestInProgress ||
+                      activeDap !== null) &&
+                      styles.disabledButton,
                   ]}
                 >
                   <Text
@@ -286,9 +426,12 @@ export default function MapScreen({
                 isMenuOpen ? 'Close account menu' : 'Open account menu'
               }
               accessibilityState={{ expanded: isMenuOpen }}
-              disabled={isSubmitting}
+              disabled={isSubmitting || isSavingPreferences}
               onPress={() => setIsMenuOpen((isOpen) => !isOpen)}
-              style={[styles.menuButton, isSubmitting && styles.disabledButton]}
+              style={[
+                styles.menuButton,
+                (isSubmitting || isSavingPreferences) && styles.disabledButton,
+              ]}
             >
               <View style={styles.hamburgerIcon}>
                 <View style={styles.hamburgerLine} />
@@ -301,8 +444,19 @@ export default function MapScreen({
                 {error ? <Text style={styles.accountError}>{error}</Text> : null}
                 <Pressable
                   accessibilityRole="button"
+                  disabled={isSubmitting || isSavingPreferences}
+                  onPress={openPreferences}
+                  style={styles.menuItem}
+                >
+                  <Text style={styles.preferencesMenuText}>Preferences</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
                   disabled={isSubmitting}
-                  onPress={onSignOut}
+                  onPress={() => {
+                    dapRequest.cancelRequest();
+                    onSignOut();
+                  }}
                   style={styles.menuItem}
                 >
                   <Text style={styles.signOutText}>Sign out</Text>
@@ -325,37 +479,61 @@ export default function MapScreen({
         <View style={styles.bottomActions}>
           {activeMode === 'dapper' ? (
             <Text style={styles.dapperStatus}>
-              {isOnline
+              {activeDap
+                ? 'You are busy with an active UberDap.'
+                : offeredServices.length === 0
+                  ? 'Select at least one service in Preferences to go online.'
+                : isOnline
                 ? 'Your location is being shared while you are online.'
                 : 'Your location stays private while you are offline.'}
             </Text>
           ) : null}
           <Pressable
             accessibilityRole="button"
-            disabled={isSubmitting || (activeMode === 'dapper' && isConnecting)}
+            disabled={
+              isSubmitting ||
+              (activeMode === 'dapper' && isConnecting) ||
+              (activeMode === 'order' && dapRequest.isRestoring)
+            }
             onPress={
               activeMode === 'dapper'
                 ? toggleDapperAvailability
-                : openRequestMenu
+                : () => {
+                    if (dapRequest.status === 'delivered') {
+                      dapRequest.resetRequest();
+                    }
+                    openRequestMenu();
+                  }
             }
             style={[
               styles.requestButton,
               activeMode === 'dapper' && styles.goOnlineButton,
               activeMode === 'dapper' && isOnline && styles.goOfflineButton,
               (isSubmitting ||
-                (activeMode === 'dapper' && isConnecting)) &&
+                (activeMode === 'dapper' && isConnecting) ||
+                (activeMode === 'order' && dapRequest.isRestoring)) &&
                 styles.disabledButton,
             ]}
           >
-            {isConnecting ? (
+            {isConnecting ||
+            (activeMode === 'order' && dapRequest.isRestoring) ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
               <Text style={styles.requestButtonText}>
                 {activeMode === 'dapper'
-                  ? isOnline
+                  ? offeredServices.length === 0
+                    ? 'Choose Services'
+                    : isOnline
                     ? 'Go Offline'
                     : 'Go Online'
-                  : 'Request UberDap'}
+                  : dapRequest.status === 'matched'
+                    ? 'View Your UberDap'
+                    : dapRequest.status === 'searching' ||
+                        dapRequest.status === 'connecting'
+                      ? 'Matching...'
+                      : dapRequest.status === 'delivered'
+                        ? 'Request Another UberDap'
+                        : 'Request UberDap'}
               </Text>
             )}
           </Pressable>
@@ -373,9 +551,15 @@ export default function MapScreen({
           >
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>
-                {matchDeadline === null
-                  ? 'Choose your UberDap'
-                  : 'Finding a dapper'}
+                {dapRequest.status === 'matched'
+                  ? 'Your UberDap'
+                  : dapRequest.status === 'delivered'
+                    ? 'UberDap delivered'
+                    : dapRequest.status === 'connecting'
+                      ? 'Connecting'
+                      : dapRequest.status === 'searching'
+                        ? 'Finding a dapper'
+                        : 'Choose your UberDap'}
               </Text>
               <Pressable
                 accessibilityLabel="Close request menu"
@@ -384,12 +568,18 @@ export default function MapScreen({
                 style={styles.sheetCloseButton}
               >
                 <Text style={styles.sheetCloseText}>
-                  {matchDeadline === null ? 'Close' : 'Cancel'}
+                  {dapRequest.status === 'connecting' ||
+                  dapRequest.status === 'searching'
+                    ? 'Cancel'
+                    : 'Close'}
                 </Text>
               </Pressable>
             </View>
-            {matchDeadline === null ? (
+            {dapRequest.status === 'idle' || dapRequest.status === 'failed' ? (
               <>
+                {dapRequest.error ? (
+                  <Text style={styles.matchingError}>{dapRequest.error}</Text>
+                ) : null}
                 <View style={styles.options}>
                   {dapOptions.map((option) => {
                     const isSelected = selectedDap === option;
@@ -428,27 +618,241 @@ export default function MapScreen({
                 </View>
                 <Pressable
                   accessibilityRole="button"
+                  disabled={!location || isLocating}
                   onPress={confirmRequest}
-                  style={styles.confirmButton}
+                  style={[
+                    styles.confirmButton,
+                    (!location || isLocating) && styles.disabledButton,
+                  ]}
                 >
                   <Text style={styles.confirmButtonText}>
                     Confirm UberDap
                   </Text>
                 </Pressable>
               </>
-            ) : (
+            ) : dapRequest.status === 'connecting' ||
+              dapRequest.status === 'searching' ? (
               <View style={styles.matchingContent}>
                 <ActivityIndicator color="#314b9a" size="large" />
-                <Text style={styles.matchingText}>
-                  Matching you with a dapper within the next{' '}
-                  {matchMinutesRemaining}{' '}
-                  {matchMinutesRemaining === 1 ? 'minute' : 'minutes'}...
+                {dapRequest.status === 'connecting' ? (
+                  <Text style={styles.matchingText}>
+                    Connecting to the dapper network...
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={styles.matchingText}>
+                      Matching you with a dapper within the next{' '}
+                      {matchMinutesRemaining}{' '}
+                      {matchMinutesRemaining === 1 ? 'minute' : 'minutes'}...
+                    </Text>
+                    <Text style={styles.matchingCountdown}>
+                      {formattedSecondsRemaining} remaining
+                    </Text>
+                  </>
+                )}
+              </View>
+            ) : dapRequest.status === 'matched' ? (
+              <View style={styles.matchingContent}>
+                <Text style={styles.matchSuccessText}>
+                  Your UberDap will arrive soon.
                 </Text>
-                <Text style={styles.matchingCountdown}>
-                  {formattedSecondsRemaining} remaining
+                <Text style={styles.matchedDapperName}>
+                  {dapRequest.matchedDapper?.username}
+                </Text>
+                <Text style={styles.crispinessStars}>★★½☆☆</Text>
+                <Text style={styles.crispinessRating}>
+                  Crispiness Rating:{' '}
+                  {dapRequest.matchedDapper?.crispinessRating.toFixed(1)} / 5
                 </Text>
               </View>
+            ) : (
+              <View style={styles.matchingContent}>
+                <Text style={styles.matchSuccessText}>
+                  Your UberDap has been delivered.
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={dapRequest.resetRequest}
+                  style={styles.confirmButton}
+                >
+                  <Text style={styles.confirmButtonText}>
+                    Request another UberDap
+                  </Text>
+                </Pressable>
+              </View>
             )}
+          </Animated.View>
+        ) : null}
+
+        {isPreferencesOpen ? (
+          <Animated.View
+            style={[
+              styles.preferencesSheet,
+              {
+                height: sheetHeight,
+                transform: [{ translateY: preferencesTranslateY }],
+              },
+            ]}
+          >
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Dapper Preferences</Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSavingPreferences}
+                onPress={closePreferences}
+                style={styles.sheetCloseButton}
+              >
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.preferencesDescription}>
+              Select at least one service you offer.
+            </Text>
+            <View style={styles.options}>
+              {dapOptions.map((service) => {
+                const isSelected = selectedServices.includes(service);
+
+                return (
+                  <Pressable
+                    accessibilityLabel={service}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isSelected }}
+                    disabled={isSavingPreferences}
+                    key={service}
+                    onPress={() => toggleService(service)}
+                    style={[
+                      styles.optionButton,
+                      isSelected && styles.optionButtonSelected,
+                      isSavingPreferences && styles.disabledButton,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.serviceCheckbox,
+                        isSelected && styles.serviceCheckboxSelected,
+                      ]}
+                    >
+                      {isSelected ? (
+                        <View style={styles.serviceCheckmark} />
+                      ) : null}
+                    </View>
+                    <Text
+                      style={[
+                        styles.optionText,
+                        isSelected && styles.optionTextSelected,
+                      ]}
+                    >
+                      {service}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {error ? <Text style={styles.preferencesError}>{error}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={selectedServices.length === 0 || isSavingPreferences}
+              onPress={() => void savePreferences()}
+              style={[
+                styles.confirmButton,
+                (selectedServices.length === 0 || isSavingPreferences) &&
+                  styles.disabledButton,
+              ]}
+            >
+              {isSavingPreferences ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.confirmButtonText}>Save Preferences</Text>
+              )}
+            </Pressable>
+          </Animated.View>
+        ) : null}
+
+        {isDapperSheetOpen ? (
+          <Animated.View
+            style={[
+              styles.dapperSheet,
+              {
+                height: sheetHeight,
+                transform: [{ translateY: dapperSheetTranslateY }],
+              },
+            ]}
+          >
+            <Text style={styles.dapperSheetTitle}>
+              {activeDap ? 'UberDap accepted' : 'New UberDap request'}
+            </Text>
+            {activeDap ? (
+              <>
+                <Text style={styles.dapperSheetService}>
+                  {activeDap.service}
+                </Text>
+                <Text style={styles.dapperSheetText}>
+                  Requested by {activeDap.userName}
+                </Text>
+                <Text style={styles.dapperSheetText}>
+                  Travel to {activeDap.location.latitude.toFixed(5)},{' '}
+                  {activeDap.location.longitude.toFixed(5)}
+                </Text>
+                {!isOnline ? (
+                  <Text style={styles.dapperSheetHint}>
+                    Go online again to mark this dap delivered.
+                  </Text>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!isOnline || isResponding}
+                  onPress={markDapDelivered}
+                  style={[
+                    styles.deliveredButton,
+                    (!isOnline || isResponding) && styles.disabledButton,
+                  ]}
+                >
+                  <Text style={styles.deliveredButtonText}>
+                    {isResponding ? 'Updating...' : 'Dap Delivered'}
+                  </Text>
+                </Pressable>
+              </>
+            ) : offer ? (
+              <>
+                <Text style={styles.dapperSheetService}>{offer.service}</Text>
+                <Text style={styles.dapperSheetText}>
+                  Requested by {offer.userName}
+                </Text>
+                <Text style={styles.dapperSheetText}>
+                  {offer.distanceKm.toFixed(1)} km away
+                </Text>
+                <Text style={styles.dapperSheetText}>
+                  Location: {offer.location.latitude.toFixed(5)},{' '}
+                  {offer.location.longitude.toFixed(5)}
+                </Text>
+                <View style={styles.offerActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isResponding}
+                    onPress={declineOffer}
+                    style={[
+                      styles.declineButton,
+                      isResponding && styles.disabledButton,
+                    ]}
+                  >
+                    <Text style={styles.declineButtonText}>Decline</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isResponding}
+                    onPress={acceptOffer}
+                    style={[
+                      styles.acceptButton,
+                      isResponding && styles.disabledButton,
+                    ]}
+                  >
+                    <Text style={styles.acceptButtonText}>
+                      {isResponding ? 'Responding...' : 'Accept'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
           </Animated.View>
         ) : null}
 
@@ -602,6 +1006,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
+  preferencesMenuText: {
+    color: '#34425c',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   bottomActions: {
     position: 'absolute',
     right: 16,
@@ -682,6 +1091,34 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: -5 },
   },
+  preferencesSheet: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1106,
+    elevation: 18,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    backgroundColor: '#ffffff',
+    shadowColor: '#172033',
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -5 },
+  },
+  preferencesDescription: {
+    color: '#6f7a90',
+    fontSize: 14,
+    marginBottom: 14,
+  },
+  preferencesError: {
+    color: '#b42318',
+    fontSize: 13,
+    marginTop: 8,
+    textAlign: 'center',
+  },
   sheetHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -738,6 +1175,26 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: '#314b9a',
   },
+  serviceCheckbox: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#aab3c3',
+    borderRadius: 6,
+    marginRight: 13,
+  },
+  serviceCheckboxSelected: {
+    borderColor: '#314b9a',
+    backgroundColor: '#314b9a',
+  },
+  serviceCheckmark: {
+    width: 8,
+    height: 8,
+    borderRadius: 2,
+    backgroundColor: '#ffffff',
+  },
   optionText: {
     color: '#34425c',
     fontSize: 15,
@@ -759,6 +1216,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  matchingError: {
+    color: '#b42318',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
   matchingContent: {
     flex: 1,
     alignItems: 'center',
@@ -777,6 +1241,114 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginTop: 8,
+  },
+  matchSuccessText: {
+    color: '#34425c',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  matchedDapperName: {
+    color: '#172033',
+    fontSize: 23,
+    fontWeight: '700',
+    marginTop: 20,
+  },
+  crispinessStars: {
+    color: '#e0a800',
+    fontSize: 25,
+    letterSpacing: 2,
+    marginTop: 8,
+  },
+  crispinessRating: {
+    color: '#6f7a90',
+    fontSize: 14,
+    marginTop: 5,
+  },
+  dapperSheet: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1104,
+    elevation: 15,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    backgroundColor: '#ffffff',
+    shadowColor: '#172033',
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -5 },
+  },
+  dapperSheetTitle: {
+    color: '#172033',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 18,
+  },
+  dapperSheetService: {
+    color: '#314b9a',
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  dapperSheetText: {
+    color: '#34425c',
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 8,
+  },
+  dapperSheetHint: {
+    color: '#6f7a90',
+    fontSize: 13,
+    marginTop: 6,
+  },
+  offerActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 18,
+  },
+  declineButton: {
+    flex: 1,
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#f0b8b5',
+    borderRadius: 13,
+  },
+  declineButtonText: {
+    color: '#b42318',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  acceptButton: {
+    flex: 1,
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: '#16845b',
+  },
+  acceptButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  deliveredButton: {
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    marginTop: 20,
+    backgroundColor: '#16845b',
+  },
+  deliveredButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
   },
   toast: {
     position: 'absolute',

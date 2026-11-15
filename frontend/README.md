@@ -14,9 +14,15 @@ OpenStreetMap; native iOS and Android use `react-native-maps`.
 Native maps use Google Maps with a minimal style. Set `GOOGLE_MAPS_API_KEY` in
 `.env` before creating native builds; restrict the key to this app's iOS and
 Android identifiers in Google Cloud.
+Dappers select at least one of UberDap, UberDap Plus, and UberDap Deluxe during
+onboarding. They can update those offerings later from the map's hamburger menu
+under **Preferences**.
 Dappers can use **Go Online** to share foreground location with the backend
 over an authenticated WebSocket; location updates stop when they switch to
-order mode, go offline, or disconnect. Order mode never starts a location stream.
+order mode, go offline, or disconnect. Order mode only streams location while
+matching an UberDap request. Matching offers go to the nearest available online
+dapper within 75 km, one at a time, for up to 10 minutes. Dappers can accept or
+decline offers, and an accepted request stays active until **Dap Delivered**.
 
 ## Backend API
 

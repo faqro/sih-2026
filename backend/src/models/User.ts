@@ -1,11 +1,18 @@
 import { model, Schema } from 'mongoose';
 
 export type AppMode = 'order' | 'dapper';
+export const DAP_SERVICES = [
+  'UberDap',
+  'UberDap Plus',
+  'UberDap Deluxe',
+] as const;
+export type DapService = (typeof DAP_SERVICES)[number];
 
 type UserDocument = {
   username: string;
   password: string;
   activeMode: AppMode;
+  offeredServices: DapService[];
   hasCompletedOnboarding: boolean;
   onboardingCompletedAt: Date | null;
 };
@@ -31,6 +38,11 @@ const userSchema = new Schema<UserDocument>(
       type: String,
       enum: ['order', 'dapper'],
       default: 'order',
+      required: true,
+    },
+    offeredServices: {
+      type: [{ type: String, enum: DAP_SERVICES }],
+      default: [],
       required: true,
     },
     hasCompletedOnboarding: {

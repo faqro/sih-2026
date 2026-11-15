@@ -19,10 +19,13 @@ import {
   completeOnboarding,
   deleteAccount,
   fetchCurrentUser,
+  updateDapperPreferences,
   updateActiveMode,
   type AppMode,
   type AuthMode,
   type AuthUser,
+  type DapService,
+  type OnboardingChoice,
 } from './src/api/auth';
 import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
@@ -48,6 +51,7 @@ export default function App() {
     Boolean(loadAuthToken()),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [onboardingAction, setOnboardingAction] =
     useState<OnboardingAction | null>(null);
 
@@ -137,7 +141,7 @@ export default function App() {
 
   async function handleOnboardingChoice(
     action: OnboardingAction,
-    choice: { mode: AppMode } | { skip: true },
+    choice: OnboardingChoice,
   ) {
     if (!user) {
       return;
@@ -155,6 +159,33 @@ export default function App() {
       handleSessionError(onboardingError, 'Unable to save your setup choice.');
     } finally {
       setOnboardingAction(null);
+    }
+  }
+
+  async function handleSaveDapperPreferences(
+    offeredServices: DapService[],
+  ): Promise<boolean> {
+    if (!user) {
+      return false;
+    }
+
+    setError(null);
+    setIsSavingPreferences(true);
+
+    try {
+      const result = await updateDapperPreferences(user.token, offeredServices);
+      setUser((current) =>
+        current ? { ...result.user, token: current.token } : null,
+      );
+      return true;
+    } catch (preferencesError) {
+      handleSessionError(
+        preferencesError,
+        'Unable to save dapper preferences.',
+      );
+      return false;
+    } finally {
+      setIsSavingPreferences(false);
     }
   }
 
@@ -228,8 +259,13 @@ export default function App() {
           <OnboardingModeScreen
             error={error}
             pendingAction={onboardingAction}
-            onSelectMode={(selectedMode) =>
-              void handleOnboardingChoice(selectedMode, { mode: selectedMode })
+            onSelectMode={(selectedMode, offeredServices) =>
+              void handleOnboardingChoice(
+                selectedMode,
+                selectedMode === 'dapper'
+                  ? { mode: 'dapper', offeredServices }
+                  : { mode: 'order' },
+              )
             }
             onSignOut={() => signOut()}
             onSkip={() => void handleOnboardingChoice('skip', { skip: true })}
@@ -247,9 +283,12 @@ export default function App() {
           <MapScreen
             activeMode={user.activeMode}
             error={error}
+            isSavingPreferences={isSavingPreferences}
             isSubmitting={isSubmitting}
+            offeredServices={user.offeredServices}
             onChangeMode={(nextMode) => void handleChangeMapMode(nextMode)}
             onDeleteAccount={() => void removeAccount()}
+            onSaveDapperPreferences={handleSaveDapperPreferences}
             onSignOut={() => signOut()}
             token={user.token}
           />
