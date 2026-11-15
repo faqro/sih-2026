@@ -1367,8 +1367,12 @@ export default function MapScreen({
                 ) : null}
                 <ScrollView
                   contentContainerStyle={styles.options}
-                  showsVerticalScrollIndicator={false}
-                  style={styles.optionListScroll}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  style={[
+                    styles.optionListScroll,
+                    { maxHeight: Math.max(48, sheetHeight - 180) },
+                  ]}
                 >
                   {dapOptions.map((option) => {
                     const isSelected = selectedDap === option;
@@ -1638,8 +1642,12 @@ export default function MapScreen({
             </Text>
             <ScrollView
               contentContainerStyle={styles.options}
-              showsVerticalScrollIndicator={false}
-              style={styles.optionListScroll}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              style={[
+                styles.optionListScroll,
+                { maxHeight: Math.max(48, sheetHeight - 225) },
+              ]}
             >
               {dapOptions.map((service) => {
                 const isSelected = selectedServices.includes(service);

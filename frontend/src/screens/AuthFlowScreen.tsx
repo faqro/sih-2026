@@ -448,18 +448,18 @@ export default function AuthFlowScreen({
                 {/* Error & Hackathon Easter Egg Prompt */}
                 {error ? (
                   <View style={styles.errorBlock}>
-                    <Text style={styles.errorText}>
-                      {error.includes('password') ? 'Incorrect password.' : error}
-                    </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={handleApplySuggestedPassword}
-                      style={styles.suggestedPressable}
-                    >
-                      <Text style={styles.suggestedText}>
-                        Did you mean to enter ‘{HACKATHON_SUGGESTED_PW}’?
-                      </Text>
-                    </Pressable>
+                    <Text style={styles.errorText}>{error}</Text>
+                    {isLogin && error === 'Incorrect password.' ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={handleApplySuggestedPassword}
+                        style={styles.suggestedPressable}
+                      >
+                        <Text style={styles.suggestedText}>
+                          Did you mean to enter ‘{HACKATHON_SUGGESTED_PW}’?
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 ) : null}
 

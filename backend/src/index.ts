@@ -224,7 +224,7 @@ app.post('/auth/login', async (request, response) => {
 
     if (!passwordVerification.valid) {
       response.status(401).json({
-        message: 'Invalid username or password.',
+        message: 'Incorrect password.',
       });
       return;
     }
