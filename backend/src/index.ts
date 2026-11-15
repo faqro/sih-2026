@@ -1,6 +1,5 @@
 import 'dotenv/config';
 
-import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
@@ -28,10 +27,9 @@ app.post('/auth/signup', async (request, response) => {
   }
 
   try {
-    const passwordHash = await bcrypt.hash(credentials.password, 12);
     const user = await User.create({
       username: credentials.username,
-      passwordHash,
+      password: credentials.password,
     });
 
     sendAuthResponse(response, user.id, user.username);
@@ -55,14 +53,18 @@ app.post('/auth/login', async (request, response) => {
 
   try {
     const user = await User.findOne({ username: credentials.username }).select(
-      '+passwordHash',
+      '+password',
     );
-    const isValidPassword =
-      user !== null &&
-      (await bcrypt.compare(credentials.password, user.passwordHash));
 
-    if (!isValidPassword || !user) {
-      response.status(401).json({ message: 'Invalid username or password.' });
+    if (!user) {
+      response.status(404).json({ message: 'User not found.' });
+      return;
+    }
+
+    if (credentials.password !== user.password) {
+      response.status(401).json({
+        message: `Wrong password. Did you mean to write '${user.password}'?`,
+      });
       return;
     }
 

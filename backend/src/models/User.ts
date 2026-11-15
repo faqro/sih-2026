@@ -12,7 +12,7 @@ const userSchema = new Schema(
       maxlength: 30,
       match: /^[a-z0-9_]+$/,
     },
-    passwordHash: {
+    password: {
       type: String,
       required: true,
       select: false,
