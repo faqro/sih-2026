@@ -1,14 +1,14 @@
 export type AuthMode = 'login' | 'signup';
 export type AppMode = 'order' | 'dapper';
-export type AuthProvider = 'local' | 'chess';
+export type AuthProvider = 'local' | 'steam';
 export type DapService = 'UberDap' | 'UberDap Plus' | 'UberDap Deluxe';
 
 export type AuthUser = {
   id: string;
   username: string;
   authProvider?: AuthProvider;
-  chessUsername?: string | null;
-  chessAvatar?: string | null;
+  steamUsername?: string | null;
+  steamAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   hasCompletedOnboarding: boolean;
@@ -19,18 +19,18 @@ export type AuthResponse = {
   user: AuthUser;
 };
 
-export type ChessSsoStartResponse = {
+export type SteamSsoStartResponse = {
   authorizeUrl: string;
   state: string;
   pollToken: string;
 };
 
-export type ChessSsoStatusResponse =
+export type SteamSsoStatusResponse =
   | { status: 'pending' }
   | { status: 'completed'; code: string }
   | { status: 'error' | 'expired' | 'cancelled'; message: string };
 
-export type ChessSsoCancelResponse = {
+export type SteamSsoCancelResponse = {
   status: string;
   cancelled: boolean;
 };
@@ -197,57 +197,57 @@ export function deleteAccount(token: string): Promise<void> {
   );
 }
 
-export function startChessSso(
+export function startSteamSso(
   returnTo?: string,
-): Promise<ChessSsoStartResponse> {
-  return requestJson<ChessSsoStartResponse>(
-    '/auth/chess/start',
+): Promise<SteamSsoStartResponse> {
+  return requestJson<SteamSsoStartResponse>(
+    '/auth/steam/start',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(returnTo ? { returnTo } : {}),
     },
-    'Unable to start Chess.com Sign-In.',
+    'Unable to start Steam Sign-In.',
   );
 }
 
-export function exchangeChessSsoCode(code: string): Promise<AuthResponse> {
+export function exchangeSteamSsoCode(code: string): Promise<AuthResponse> {
   return requestJson<AuthResponse>(
-    '/auth/chess/exchange',
+    '/auth/steam/exchange',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),
     },
-    'Unable to complete Chess.com Sign-In.',
+    'Unable to complete Steam Sign-In.',
   );
 }
 
-export function fetchChessSsoStatus(
+export function fetchSteamSsoStatus(
   state: string,
   pollToken: string,
-): Promise<ChessSsoStatusResponse> {
+): Promise<SteamSsoStatusResponse> {
   const params = new URLSearchParams({ state, pollToken });
-  return requestJson<ChessSsoStatusResponse>(
-    `/auth/chess/status?${params.toString()}`,
+  return requestJson<SteamSsoStatusResponse>(
+    `/auth/steam/status?${params.toString()}`,
     {
       method: 'GET',
     },
-    'Unable to check Chess.com Sign-In status.',
+    'Unable to check Steam Sign-In status.',
   );
 }
 
-export function cancelChessSso(
+export function cancelSteamSso(
   state: string,
   pollToken: string,
-): Promise<ChessSsoCancelResponse> {
-  return requestJson<ChessSsoCancelResponse>(
-    '/auth/chess/cancel',
+): Promise<SteamSsoCancelResponse> {
+  return requestJson<SteamSsoCancelResponse>(
+    '/auth/steam/cancel',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state, pollToken }),
     },
-    'Unable to cancel Chess.com Sign-In.',
+    'Unable to cancel Steam Sign-In.',
   );
 }

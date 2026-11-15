@@ -9,19 +9,19 @@ import mongoose from 'mongoose';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import {
-  ChessOAuthConfigError,
-  ChessOAuthFlowError,
-  cancelChessOAuthSession,
-  completeChessSessionWithCode,
+  SteamAuthConfigError,
+  SteamAuthFlowError,
+  cancelSteamAuthSession,
+  completeSteamSessionWithCode,
   consumeExchangeCode,
-  createChessAuthorizationSession,
   createExchangeCode,
-  exchangeChessAuthorizationCode,
-  getChessOAuthSession,
-  getChessOAuthSessionForPoll,
-  markChessSessionError,
-  type ChessUserProfile,
-} from './chessOAuth.js';
+  createSteamAuthorizationSession,
+  getSteamAuthSession,
+  getSteamAuthSessionForPoll,
+  markSteamSessionError,
+  verifySteamOpenIdCallback,
+  type SteamUserProfile,
+} from './steamAuth.js';
 import { DapRating } from './models/DapRating.js';
 import {
   DAP_SERVICES,
@@ -207,10 +207,10 @@ app.post('/auth/login', async (request, response) => {
       return;
     }
 
-    if (user.authProvider === 'chess' || !user.password) {
+    if (user.authProvider === 'steam' || !user.password) {
       response.status(400).json({
         message:
-          'This account uses Chess.com Sign-In. Please tap "Continue with Chess.com".',
+          'This account uses Steam Sign-In. Please tap "Continue with Steam".',
       });
       return;
     }
@@ -229,7 +229,7 @@ app.post('/auth/login', async (request, response) => {
   }
 });
 
-app.post('/auth/chess/start', async (request, response) => {
+app.post('/auth/steam/start', (request, response) => {
   const body: unknown = request.body;
   const rawReturnTo =
     isRecord(body) && typeof body.returnTo === 'string' ? body.returnTo : null;
@@ -238,120 +238,99 @@ app.post('/auth/chess/start', async (request, response) => {
   const returnTo = resolveSafeReturnTo(rawReturnTo);
 
   try {
-    const redirectUri = resolveChessRedirectUri(request, requestedRedirectUri);
-    const session = await createChessAuthorizationSession({
-      redirectUri,
+    const callbackBaseUrl = resolveSteamRedirectUri(
+      request,
+      requestedRedirectUri,
+    );
+    const session = createSteamAuthorizationSession({
+      callbackBaseUrl,
       returnTo,
     });
     response.status(200).json(session);
   } catch (error) {
-    if (error instanceof ChessOAuthConfigError) {
+    if (error instanceof SteamAuthConfigError) {
       response.status(503).json({ message: error.message });
       return;
     }
 
-    if (error instanceof ChessOAuthFlowError) {
+    if (error instanceof SteamAuthFlowError) {
       response.status(error.status).json({ message: error.message });
       return;
     }
 
-    console.error('Unable to start Chess.com SSO:', error);
-    response.status(500).json({ message: 'Unable to start Chess.com Sign-In.' });
+    console.error('Unable to start Steam SSO:', error);
+    response.status(500).json({ message: 'Unable to start Steam Sign-In.' });
   }
 });
 
-app.get('/auth/chess/callback', async (request, response) => {
+app.get('/auth/steam/callback', async (request, response) => {
   const state =
     typeof request.query.state === 'string' ? request.query.state : '';
-  const code = typeof request.query.code === 'string' ? request.query.code : '';
-  const oauthError =
-    typeof request.query.error === 'string' ? request.query.error : '';
-  const oauthErrorDescription =
-    typeof request.query.error_description === 'string'
-      ? request.query.error_description
-      : '';
 
-  const existingSession = state ? getChessOAuthSession(state) : null;
+  const existingSession = state ? getSteamAuthSession(state) : null;
   const fallbackReturnTo = resolveSafeReturnTo(existingSession?.returnTo ?? null);
 
-  if (oauthError) {
-    const message =
-      oauthError === 'access_denied'
-        ? 'Chess.com sign-in was cancelled.'
-        : oauthErrorDescription || `Chess.com sign-in failed (${oauthError}).`;
-
-    if (state) {
-      markChessSessionError(state, message);
-    }
-
-    sendChessCallbackError(response, fallbackReturnTo, message);
-    return;
-  }
-
-  if (!state || !code) {
-    const message = 'Missing authorization code or state from Chess.com.';
-    if (state) {
-      markChessSessionError(state, message);
-    }
-    sendChessCallbackError(response, fallbackReturnTo, message);
+  if (!state) {
+    const message = 'Missing Steam sign-in state parameter.';
+    sendSteamCallbackError(response, fallbackReturnTo, message);
     return;
   }
 
   try {
-    const { profile, session } = await exchangeChessAuthorizationCode({
+    const { profile, session } = await verifySteamOpenIdCallback({
       state,
-      code,
+      query: request.query as Record<string, unknown>,
     });
     if (session.status !== 'pending') {
-      throw new ChessOAuthFlowError('Chess.com sign-in was cancelled.', 400);
+      throw new SteamAuthFlowError('Steam sign-in was cancelled.', 400);
     }
 
-    const user = await findOrCreateChessUser(profile);
+    const user = await findOrCreateSteamUser(profile);
     const serialized = serializeUser(user);
     const token = signUserToken(serialized);
     const exchangeCode = createExchangeCode(token, serialized);
 
-    if (!completeChessSessionWithCode(state, exchangeCode)) {
+    if (!completeSteamSessionWithCode(state, exchangeCode)) {
       consumeExchangeCode(exchangeCode);
-      throw new ChessOAuthFlowError('Chess.com sign-in was cancelled.', 400);
+      throw new SteamAuthFlowError('Steam sign-in was cancelled.', 400);
     }
 
     const targetReturnTo = resolveSafeReturnTo(session.returnTo);
     if (targetReturnTo && isHttpUrl(targetReturnTo)) {
       const redirectTarget = new URL(targetReturnTo);
-      redirectTarget.searchParams.set('chess_code', exchangeCode);
+      redirectTarget.searchParams.set('steam_code', exchangeCode);
       response.redirect(302, redirectTarget.toString());
       return;
     }
 
-    const deepLinkTarget = buildNativeChessDeepLink(targetReturnTo, {
-      chess_code: exchangeCode,
+    const deepLinkTarget = buildNativeSteamDeepLink(targetReturnTo, {
+      steam_code: exchangeCode,
     });
 
     response
       .status(200)
       .type('html')
       .send(
-        renderChessCallbackHtml(
-          'Signed in with Chess.com',
+        renderSteamCallbackHtml(
+          'Signed in with Steam',
           'Returning you to UberDaps. Tap the button below if the app does not open automatically.',
           deepLinkTarget,
         ),
       );
   } catch (error) {
     const message =
-      error instanceof ChessOAuthConfigError ||
-      error instanceof ChessOAuthFlowError
+      error instanceof SteamAuthConfigError ||
+      error instanceof SteamAuthFlowError
         ? error.message
-        : 'Unable to complete Chess.com Sign-In.';
+        : 'Unable to complete Steam Sign-In.';
 
-    console.error('Chess.com SSO callback error:', error);
-    markChessSessionError(state, message);
-    sendChessCallbackError(response, fallbackReturnTo, message);
+    console.error('Steam SSO callback error:', error);
+    markSteamSessionError(state, message);
+    sendSteamCallbackError(response, fallbackReturnTo, message);
   }
 });
 
-app.post('/auth/chess/exchange', (request, response) => {
+app.post('/auth/steam/exchange', (request, response) => {
   const body: unknown = request.body;
 
   if (
@@ -359,7 +338,7 @@ app.post('/auth/chess/exchange', (request, response) => {
     typeof body.code !== 'string' ||
     body.code.trim().length === 0
   ) {
-    response.status(400).json({ message: 'Chess.com exchange code is required.' });
+    response.status(400).json({ message: 'Steam exchange code is required.' });
     return;
   }
 
@@ -367,7 +346,7 @@ app.post('/auth/chess/exchange', (request, response) => {
 
   if (!payload) {
     response.status(401).json({
-      message: 'Chess.com sign-in session expired. Please try again.',
+      message: 'Steam sign-in session expired. Please try again.',
     });
     return;
   }
@@ -375,7 +354,7 @@ app.post('/auth/chess/exchange', (request, response) => {
   response.status(200).json(payload);
 });
 
-app.get('/auth/chess/status', (request, response) => {
+app.get('/auth/steam/status', (request, response) => {
   const state =
     typeof request.query.state === 'string' ? request.query.state.trim() : '';
   const queryPollToken =
@@ -383,27 +362,27 @@ app.get('/auth/chess/status', (request, response) => {
       ? request.query.pollToken.trim()
       : '';
   const headerPollToken =
-    request.get('x-chess-poll-token')?.trim() || '';
+    request.get('x-steam-poll-token')?.trim() || '';
   const pollToken = queryPollToken || headerPollToken;
 
   if (!state || !pollToken) {
-    response.status(400).json({ message: 'Missing OAuth state or pollToken.' });
+    response.status(400).json({ message: 'Missing Steam state or pollToken.' });
     return;
   }
 
-  const lookup = getChessOAuthSessionForPoll(state, pollToken);
+  const lookup = getSteamAuthSessionForPoll(state, pollToken);
 
   if (lookup.kind === 'expired') {
     response.status(200).json({
       status: 'expired',
-      message: 'Chess.com sign-in session expired. Please try again.',
+      message: 'Steam sign-in session expired. Please try again.',
     });
     return;
   }
 
   if (lookup.kind === 'unauthorized') {
     response.status(403).json({
-      message: 'Invalid Chess.com sign-in poll token.',
+      message: 'Invalid Steam sign-in poll token.',
     });
     return;
   }
@@ -421,7 +400,7 @@ app.get('/auth/chess/status', (request, response) => {
   if (session.status === 'cancelled') {
     response.status(200).json({
       status: 'cancelled',
-      message: session.errorMessage || 'Chess.com sign-in was cancelled.',
+      message: session.errorMessage || 'Steam sign-in was cancelled.',
     });
     return;
   }
@@ -429,7 +408,7 @@ app.get('/auth/chess/status', (request, response) => {
   if (session.status === 'error') {
     response.status(200).json({
       status: 'error',
-      message: session.errorMessage || 'Chess.com sign-in failed.',
+      message: session.errorMessage || 'Steam sign-in failed.',
     });
     return;
   }
@@ -437,7 +416,7 @@ app.get('/auth/chess/status', (request, response) => {
   response.status(200).json({ status: 'pending' });
 });
 
-app.post('/auth/chess/cancel', (request, response) => {
+app.post('/auth/steam/cancel', (request, response) => {
   const body: unknown = request.body;
 
   if (
@@ -448,12 +427,12 @@ app.post('/auth/chess/cancel', (request, response) => {
     body.pollToken.trim().length === 0
   ) {
     response.status(400).json({
-      message: 'Chess.com OAuth state and pollToken are required.',
+      message: 'Steam sign-in state and pollToken are required.',
     });
     return;
   }
 
-  const result = cancelChessOAuthSession(
+  const result = cancelSteamAuthSession(
     body.state.trim(),
     body.pollToken.trim(),
   );
@@ -465,7 +444,7 @@ app.post('/auth/chess/cancel', (request, response) => {
 
   if (result.kind === 'unauthorized') {
     response.status(403).json({
-      message: 'Invalid Chess.com sign-in poll token.',
+      message: 'Invalid Steam sign-in poll token.',
     });
     return;
   }
@@ -1765,8 +1744,8 @@ type SerializedUser = {
   id: string;
   username: string;
   authProvider: AuthProvider;
-  chessUsername: string | null;
-  chessAvatar: string | null;
+  steamUsername: string | null;
+  steamAvatar: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   hasCompletedOnboarding: boolean;
@@ -1801,8 +1780,8 @@ function serializeUser(user: {
   id: string;
   username: string;
   authProvider?: AuthProvider;
-  chessUsername?: string | null;
-  chessAvatar?: string | null;
+  steamUsername?: string | null;
+  steamAvatar?: string | null;
   activeMode?: AppMode;
   offeredServices?: DapService[];
   hasCompletedOnboarding?: boolean;
@@ -1810,9 +1789,9 @@ function serializeUser(user: {
   return {
     id: user.id,
     username: user.username,
-    authProvider: user.authProvider === 'chess' ? 'chess' : 'local',
-    chessUsername: user.chessUsername ?? null,
-    chessAvatar: user.chessAvatar ?? null,
+    authProvider: user.authProvider === 'steam' ? 'steam' : 'local',
+    steamUsername: user.steamUsername ?? null,
+    steamAvatar: user.steamAvatar ?? null,
     activeMode: user.activeMode === 'dapper' ? 'dapper' : 'order',
     offeredServices: user.offeredServices ?? [],
     hasCompletedOnboarding: Boolean(user.hasCompletedOnboarding),
@@ -1912,18 +1891,18 @@ function isHttpUrl(rawUrl: string): boolean {
   return isValidHttpUrl(rawUrl) !== null;
 }
 
-function resolveChessRedirectUri(
+function resolveSteamRedirectUri(
   request: Request,
   requestedRedirectUri?: unknown,
 ): string {
-  const configured = process.env.CHESS_OAUTH_REDIRECT_URI?.trim();
+  const configured = process.env.STEAM_OPENID_RETURN_URL?.trim();
   let canonicalUrl: URL | null = null;
 
   if (configured) {
     canonicalUrl = isValidHttpUrl(configured);
     if (!canonicalUrl) {
-      throw new ChessOAuthConfigError(
-        'CHESS_OAUTH_REDIRECT_URI must be a valid http(s) URL.',
+      throw new SteamAuthConfigError(
+        'STEAM_OPENID_RETURN_URL must be a valid http(s) URL.',
       );
     }
   } else {
@@ -1931,12 +1910,12 @@ function resolveChessRedirectUri(
     if (publicBackendUrl) {
       const parsedPublic = isValidHttpUrl(publicBackendUrl);
       if (!parsedPublic) {
-        throw new ChessOAuthConfigError(
+        throw new SteamAuthConfigError(
           'PUBLIC_BACKEND_URL must be a valid http(s) URL.',
         );
       }
       canonicalUrl = new URL(
-        `${parsedPublic.toString().replace(/\/+$/, '')}/auth/chess/callback`,
+        `${parsedPublic.toString().replace(/\/+$/, '')}/auth/steam/callback`,
       );
     } else {
       const forwardedProto = request
@@ -1949,10 +1928,10 @@ function resolveChessRedirectUri(
         request.get('host') ||
         `localhost:${port}`;
 
-      canonicalUrl = isValidHttpUrl(`${protocol}://${host}/auth/chess/callback`);
+      canonicalUrl = isValidHttpUrl(`${protocol}://${host}/auth/steam/callback`);
       if (!canonicalUrl) {
-        throw new ChessOAuthFlowError(
-          'Unable to resolve a valid Chess.com OAuth callback URL.',
+        throw new SteamAuthFlowError(
+          'Unable to resolve a valid Steam OpenID callback URL.',
           400,
         );
       }
@@ -1961,8 +1940,8 @@ function resolveChessRedirectUri(
 
   if (requestedRedirectUri !== undefined && requestedRedirectUri !== null) {
     if (typeof requestedRedirectUri !== 'string') {
-      throw new ChessOAuthFlowError(
-        'Chess.com OAuth redirectUri must be a valid URL string.',
+      throw new SteamAuthFlowError(
+        'Steam OpenID redirectUri must be a valid URL string.',
         400,
       );
     }
@@ -1971,8 +1950,8 @@ function resolveChessRedirectUri(
     if (trimmed.length > 0) {
       const parsedRequested = isValidHttpUrl(trimmed);
       if (!parsedRequested) {
-        throw new ChessOAuthFlowError(
-          'Chess.com OAuth redirectUri must be a valid http(s) URL.',
+        throw new SteamAuthFlowError(
+          'Steam OpenID redirectUri must be a valid http(s) URL.',
           400,
         );
       }
@@ -1983,8 +1962,8 @@ function resolveChessRedirectUri(
         parsedRequested.search !== canonicalUrl.search ||
         parsedRequested.hash !== canonicalUrl.hash
       ) {
-        throw new ChessOAuthFlowError(
-          'Chess.com OAuth redirectUri does not match the configured callback URL.',
+        throw new SteamAuthFlowError(
+          'Steam OpenID redirectUri does not match the configured callback URL.',
           400,
         );
       }
@@ -2033,12 +2012,12 @@ function resolveSafeReturnTo(rawReturnTo: string | null): string | null {
   return null;
 }
 
-function buildNativeChessDeepLink(
+function buildNativeSteamDeepLink(
   returnTo: string | null,
   params: Record<string, string>,
 ): string {
   const baseUrl =
-    returnTo && !isHttpUrl(returnTo) ? returnTo : 'uberdaps://auth/chess';
+    returnTo && !isHttpUrl(returnTo) ? returnTo : 'uberdaps://auth/steam';
   const target = new URL(baseUrl);
   for (const [key, value] of Object.entries(params)) {
     target.searchParams.set(key, value);
@@ -2046,28 +2025,28 @@ function buildNativeChessDeepLink(
   return target.toString();
 }
 
-function sendChessCallbackError(
+function sendSteamCallbackError(
   response: Response,
   returnTo: string | null,
   message: string,
 ): void {
   if (returnTo && isHttpUrl(returnTo)) {
     const target = new URL(returnTo);
-    target.searchParams.set('chess_error', message);
+    target.searchParams.set('steam_error', message);
     response.redirect(302, target.toString());
     return;
   }
 
-  const deepLinkTarget = buildNativeChessDeepLink(returnTo, {
-    chess_error: message,
+  const deepLinkTarget = buildNativeSteamDeepLink(returnTo, {
+    steam_error: message,
   });
 
   response
     .status(400)
     .type('html')
     .send(
-      renderChessCallbackHtml(
-        'Chess.com Sign-In Failed',
+      renderSteamCallbackHtml(
+        'Steam Sign-In Failed',
         message,
         deepLinkTarget,
       ),
@@ -2083,7 +2062,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function renderChessCallbackHtml(
+function renderSteamCallbackHtml(
   title: string,
   message: string,
   deepLinkUrl: string,
@@ -2133,32 +2112,24 @@ function sanitizeBaseUsername(raw: string): string {
     return cleaned;
   }
 
-  return 'chess_player';
+  return 'steam_player';
 }
 
-async function findOrCreateChessUser(profile: ChessUserProfile) {
-  let user = await User.findOne({ chessId: profile.chessId });
-
-  if (!user) {
-    user = await User.findOne({
-      authProvider: 'chess',
-      chessUsername: profile.chessUsername,
-      $or: [{ chessId: null }, { chessId: { $exists: false } }],
-    });
-  }
+async function findOrCreateSteamUser(profile: SteamUserProfile) {
+  let user = await User.findOne({ steamId: profile.steamId });
 
   if (user) {
     let dirty = false;
-    if (!user.chessId) {
-      user.chessId = profile.chessId;
+    if (user.authProvider !== 'steam') {
+      user.authProvider = 'steam';
       dirty = true;
     }
-    if (user.chessUsername !== profile.chessUsername) {
-      user.chessUsername = profile.chessUsername;
+    if (user.steamUsername !== profile.steamUsername) {
+      user.steamUsername = profile.steamUsername;
       dirty = true;
     }
-    if (profile.chessAvatar && user.chessAvatar !== profile.chessAvatar) {
-      user.chessAvatar = profile.chessAvatar;
+    if (profile.steamAvatar && user.steamAvatar !== profile.steamAvatar) {
+      user.steamAvatar = profile.steamAvatar;
       dirty = true;
     }
     if (dirty) {
@@ -2167,31 +2138,31 @@ async function findOrCreateChessUser(profile: ChessUserProfile) {
     return user;
   }
 
-  const baseUsername = sanitizeBaseUsername(profile.chessUsername);
+  const baseUsername = sanitizeBaseUsername(profile.steamUsername);
 
   for (let attempt = 0; attempt < 25; attempt += 1) {
     const suffix =
-      attempt === 0 ? '' : attempt === 1 ? '_chess' : `_chess_${attempt}`;
+      attempt === 0 ? '' : attempt === 1 ? '_steam' : `_steam_${attempt}`;
     const maxBaseLength = 40 - suffix.length;
     const candidate = `${baseUsername.slice(0, maxBaseLength)}${suffix}`;
 
     try {
       return await User.create({
         username: candidate,
-        authProvider: 'chess',
-        chessId: profile.chessId,
-        chessUsername: profile.chessUsername,
-        chessAvatar: profile.chessAvatar,
+        authProvider: 'steam',
+        steamId: profile.steamId,
+        steamUsername: profile.steamUsername,
+        steamAvatar: profile.steamAvatar,
         activeMode: 'order',
         hasCompletedOnboarding: false,
       });
     } catch (error) {
       if (isDuplicateUsernameError(error)) {
-        const existingByChessId = await User.findOne({
-          chessId: profile.chessId,
+        const existingBySteamId = await User.findOne({
+          steamId: profile.steamId,
         });
-        if (existingByChessId) {
-          return existingByChessId;
+        if (existingBySteamId) {
+          return existingBySteamId;
         }
         continue;
       }
@@ -2204,10 +2175,10 @@ async function findOrCreateChessUser(profile: ChessUserProfile) {
 
   return User.create({
     username: fallbackUsername,
-    authProvider: 'chess',
-    chessId: profile.chessId,
-    chessUsername: profile.chessUsername,
-    chessAvatar: profile.chessAvatar,
+    authProvider: 'steam',
+    steamId: profile.steamId,
+    steamUsername: profile.steamUsername,
+    steamAvatar: profile.steamAvatar,
     activeMode: 'order',
     hasCompletedOnboarding: false,
   });

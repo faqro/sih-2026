@@ -16,7 +16,7 @@ import AnimatedDapHands, {
   type AnimatedDapHandsHandle,
 } from '../components/AnimatedDapHands';
 
-export type SocialProvider = 'chess' | 'steam' | 'strava' | 'spotify' | 'osu';
+export type SocialProvider = 'steam' | 'strava' | 'spotify' | 'osu';
 
 type ProviderConfig = {
   id: SocialProvider;
@@ -26,12 +26,6 @@ type ProviderConfig = {
 };
 
 const PROVIDERS: readonly ProviderConfig[] = [
-  {
-    id: 'chess',
-    label: 'Continue with Chess.com',
-    borderColor: '#CFE2B8',
-    icon: require('../../assets/providers/chess.png'),
-  },
   {
     id: 'steam',
     label: 'Continue with Steam',
@@ -187,7 +181,7 @@ export default function WelcomeScreen({
                     )}
                     <Text style={styles.providerButtonText}>
                       {isPending
-                        ? 'Connecting to Chess.com...'
+                        ? 'Connecting to Steam...'
                         : provider.label}
                     </Text>
                   </View>
@@ -206,7 +200,7 @@ export default function WelcomeScreen({
               ]}
             >
               <Text style={styles.cancelPendingText}>
-                Cancel {pendingProvider === 'chess' ? 'Chess.com ' : ''}sign-in
+                Cancel {pendingProvider === 'steam' ? 'Steam ' : ''}sign-in
               </Text>
             </Pressable>
           ) : null}

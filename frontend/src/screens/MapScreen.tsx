@@ -33,8 +33,8 @@ type DapOption = (typeof dapOptions)[number];
 type MapScreenProps = {
   activeMode: AppMode;
   authProvider?: AuthProvider;
-  chessAvatar?: string | null;
-  chessUsername?: string | null;
+  steamAvatar?: string | null;
+  steamUsername?: string | null;
   error: string | null;
   isChangingMode: boolean;
   isSavingPreferences: boolean;
@@ -64,8 +64,8 @@ const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
 export default function MapScreen({
   activeMode,
   authProvider = 'local',
-  chessAvatar = null,
-  chessUsername = null,
+  steamAvatar = null,
+  steamUsername = null,
   error,
   isChangingMode,
   isSavingPreferences,
@@ -255,7 +255,7 @@ export default function MapScreen({
 
   useEffect(() => {
     setAvatarLoadFailed(false);
-  }, [chessAvatar]);
+  }, [steamAvatar]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -788,6 +788,25 @@ export default function MapScreen({
             </Pressable>
             {isMenuOpen ? (
               <View style={styles.menu}>
+                {steamUsername || username ? (
+                  <View style={styles.menuAccountHeader}>
+                    {steamAvatar && !avatarLoadFailed ? (
+                      <Image
+                        onError={() => setAvatarLoadFailed(true)}
+                        source={{ uri: steamAvatar }}
+                        style={styles.menuAvatar}
+                      />
+                    ) : null}
+                    <View style={styles.menuAccountText}>
+                      <Text numberOfLines={1} style={styles.menuUsername}>
+                        {steamUsername || username}
+                      </Text>
+                      {authProvider === 'steam' ? (
+                        <Text style={styles.menuProviderBadge}>Steam</Text>
+                      ) : null}
+                    </View>
+                  </View>
+                ) : null}
                 {error ? <Text style={styles.accountError}>{error}</Text> : null}
                 <Pressable
                   accessibilityRole="button"
@@ -1505,7 +1524,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   menuProviderBadge: {
-    color: '#5b7a38',
+    color: '#4f6382',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 2,
