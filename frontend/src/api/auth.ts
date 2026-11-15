@@ -1,10 +1,14 @@
 export type AuthMode = 'login' | 'signup';
 export type AppMode = 'order' | 'dapper';
+export type AuthProvider = 'local' | 'chess';
 export type DapService = 'UberDap' | 'UberDap Plus' | 'UberDap Deluxe';
 
 export type AuthUser = {
   id: string;
   username: string;
+  authProvider?: AuthProvider;
+  chessUsername?: string | null;
+  chessAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   hasCompletedOnboarding: boolean;
@@ -13,6 +17,22 @@ export type AuthUser = {
 export type AuthResponse = {
   token: string;
   user: AuthUser;
+};
+
+export type ChessSsoStartResponse = {
+  authorizeUrl: string;
+  state: string;
+  pollToken: string;
+};
+
+export type ChessSsoStatusResponse =
+  | { status: 'pending' }
+  | { status: 'completed'; code: string }
+  | { status: 'error' | 'expired' | 'cancelled'; message: string };
+
+export type ChessSsoCancelResponse = {
+  status: string;
+  cancelled: boolean;
 };
 
 export type OnboardingChoice =
@@ -158,5 +178,60 @@ export function deleteAccount(token: string): Promise<void> {
       headers: authorizedHeaders(token),
     },
     'Unable to delete your account.',
+  );
+}
+
+export function startChessSso(
+  returnTo?: string,
+): Promise<ChessSsoStartResponse> {
+  return requestJson<ChessSsoStartResponse>(
+    '/auth/chess/start',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(returnTo ? { returnTo } : {}),
+    },
+    'Unable to start Chess.com Sign-In.',
+  );
+}
+
+export function exchangeChessSsoCode(code: string): Promise<AuthResponse> {
+  return requestJson<AuthResponse>(
+    '/auth/chess/exchange',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    },
+    'Unable to complete Chess.com Sign-In.',
+  );
+}
+
+export function fetchChessSsoStatus(
+  state: string,
+  pollToken: string,
+): Promise<ChessSsoStatusResponse> {
+  const params = new URLSearchParams({ state, pollToken });
+  return requestJson<ChessSsoStatusResponse>(
+    `/auth/chess/status?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    'Unable to check Chess.com Sign-In status.',
+  );
+}
+
+export function cancelChessSso(
+  state: string,
+  pollToken: string,
+): Promise<ChessSsoCancelResponse> {
+  return requestJson<ChessSsoCancelResponse>(
+    '/auth/chess/cancel',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, pollToken }),
+    },
+    'Unable to cancel Chess.com Sign-In.',
   );
 }

@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   Pressable,
@@ -15,7 +16,7 @@ import AnimatedDapHands, {
   type AnimatedDapHandsHandle,
 } from '../components/AnimatedDapHands';
 
-export type SocialProvider = 'steam' | 'strava' | 'spotify' | 'osu' | 'chess';
+export type SocialProvider = 'chess' | 'steam' | 'strava' | 'spotify' | 'osu';
 
 type ProviderConfig = {
   id: SocialProvider;
@@ -25,6 +26,12 @@ type ProviderConfig = {
 };
 
 const PROVIDERS: readonly ProviderConfig[] = [
+  {
+    id: 'chess',
+    label: 'Continue with Chess.com',
+    borderColor: '#CFE2B8',
+    icon: require('../../assets/providers/chess.png'),
+  },
   {
     id: 'steam',
     label: 'Continue with Steam',
@@ -49,12 +56,6 @@ const PROVIDERS: readonly ProviderConfig[] = [
     borderColor: '#FBD1E4',
     icon: require('../../assets/providers/osu.png'),
   },
-  {
-    id: 'chess',
-    label: 'Continue with Chess.com',
-    borderColor: '#D7E8C7',
-    icon: require('../../assets/providers/chess.png'),
-  },
 ];
 
 const displayFontFamily = Platform.select({
@@ -63,16 +64,23 @@ const displayFontFamily = Platform.select({
 });
 
 type WelcomeScreenProps = {
+  error?: string | null;
+  onCancelProvider?: () => void;
   onPressLogin: () => void;
   onPressProvider?: (provider: SocialProvider) => void;
   onPressSignup: () => void;
+  pendingProvider?: SocialProvider | null;
 };
 
 export default function WelcomeScreen({
+  error = null,
+  onCancelProvider,
   onPressLogin,
   onPressProvider,
   onPressSignup,
+  pendingProvider = null,
 }: WelcomeScreenProps) {
+  const isBusy = pendingProvider !== null;
   const dapHandsRef = useRef<AnimatedDapHandsHandle>(null);
 
   function handleTriggerAndProceed(callback: () => void) {
@@ -102,10 +110,12 @@ export default function WelcomeScreen({
           <View style={styles.primaryButtons}>
             <Pressable
               accessibilityRole="button"
+              disabled={isBusy}
               onPress={() => handleTriggerAndProceed(onPressLogin)}
               style={({ pressed }) => [
                 styles.primaryButton,
-                pressed && styles.buttonPressed,
+                pressed && !isBusy && styles.buttonPressed,
+                isBusy && styles.buttonDisabled,
               ]}
             >
               <Text style={styles.primaryButtonText}>Log in</Text>
@@ -113,10 +123,12 @@ export default function WelcomeScreen({
 
             <Pressable
               accessibilityRole="button"
+              disabled={isBusy}
               onPress={() => handleTriggerAndProceed(onPressSignup)}
               style={({ pressed }) => [
                 styles.primaryButton,
-                pressed && styles.buttonPressed,
+                pressed && !isBusy && styles.buttonPressed,
+                isBusy && styles.buttonDisabled,
               ]}
             >
               <Text style={styles.primaryButtonText}>Sign up</Text>
@@ -129,40 +141,75 @@ export default function WelcomeScreen({
             <View style={styles.dividerLine} />
           </View>
 
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
           <View style={styles.providerButtons}>
-            {PROVIDERS.map((provider) => (
-              <Pressable
-                key={provider.id}
-                accessibilityRole="button"
-                onPress={() =>
-                  handleTriggerAndProceed(() => onPressProvider?.(provider.id))
-                }
-                style={({ pressed }) => [
-                  styles.providerButton,
-                  {
-                    borderColor: provider.borderColor,
-                    shadowColor: provider.borderColor,
-                    ...(Platform.OS === 'web'
-                      ? ({
-                          boxShadow: `0 0 10px 1px ${provider.borderColor}`,
-                        } as any)
-                      : {}),
-                  },
-                  pressed && styles.buttonPressed,
-                ]}
-              >
-                <View style={styles.providerButtonInner}>
-                  <Image
-                    accessibilityIgnoresInvertColors
-                    resizeMode="contain"
-                    source={provider.icon}
-                    style={styles.providerIcon}
-                  />
-                  <Text style={styles.providerButtonText}>{provider.label}</Text>
-                </View>
-              </Pressable>
-            ))}
+            {PROVIDERS.map((provider) => {
+              const isPending = pendingProvider === provider.id;
+
+              return (
+                <Pressable
+                  key={provider.id}
+                  accessibilityRole="button"
+                  disabled={isBusy}
+                  onPress={() =>
+                    handleTriggerAndProceed(() => onPressProvider?.(provider.id))
+                  }
+                  style={({ pressed }) => [
+                    styles.providerButton,
+                    {
+                      borderColor: provider.borderColor,
+                      shadowColor: provider.borderColor,
+                      ...(Platform.OS === 'web'
+                        ? ({
+                            boxShadow: `0 0 10px 1px ${provider.borderColor}`,
+                          } as any)
+                        : {}),
+                    },
+                    pressed && !isBusy && styles.buttonPressed,
+                    isBusy && !isPending && styles.buttonDisabled,
+                  ]}
+                >
+                  <View style={styles.providerButtonInner}>
+                    {isPending ? (
+                      <ActivityIndicator
+                        color="#000000"
+                        size="small"
+                        style={styles.providerIcon}
+                      />
+                    ) : (
+                      <Image
+                        accessibilityIgnoresInvertColors
+                        resizeMode="contain"
+                        source={provider.icon}
+                        style={styles.providerIcon}
+                      />
+                    )}
+                    <Text style={styles.providerButtonText}>
+                      {isPending
+                        ? 'Connecting to Chess.com...'
+                        : provider.label}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
           </View>
+
+          {pendingProvider && onCancelProvider ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onCancelProvider}
+              style={({ pressed }) => [
+                styles.cancelPendingButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              <Text style={styles.cancelPendingText}>
+                Cancel {pendingProvider === 'chess' ? 'Chess.com ' : ''}sign-in
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -234,6 +281,18 @@ const styles = StyleSheet.create({
     opacity: 0.85,
     transform: [{ scale: 0.985 }],
   },
+  buttonDisabled: {
+    opacity: 0.65,
+  },
+  errorText: {
+    color: '#e53935',
+    fontFamily: displayFontFamily,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -282,5 +341,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     letterSpacing: -0.2,
+  },
+  cancelPendingButton: {
+    marginTop: 12,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d0d7e2',
+    backgroundColor: '#ffffff',
+  },
+  cancelPendingText: {
+    color: '#34425c',
+    fontFamily: displayFontFamily,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

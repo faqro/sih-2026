@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Image,
+  Easing,
   Linking,
   Platform,
   Pressable,
@@ -13,7 +15,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import type { AppMode, DapService } from '../api/auth';
+import type { AppMode, AuthProvider, DapService } from '../api/auth';
 import { useDapRequest } from '../hooks/useDapRequest';
 import {
   resolveDapperOnlineLocation,
@@ -29,6 +31,9 @@ type DapOption = (typeof dapOptions)[number];
 
 type MapScreenProps = {
   activeMode: AppMode;
+  authProvider?: AuthProvider;
+  chessAvatar?: string | null;
+  chessUsername?: string | null;
   error: string | null;
   isChangingMode: boolean;
   isSavingPreferences: boolean;
@@ -41,6 +46,7 @@ type MapScreenProps = {
   ) => Promise<boolean>;
   onSignOut: () => void;
   token: string;
+  username?: string;
 };
 
 type LocationPromptState = {
@@ -56,6 +62,9 @@ const MODE_TABS: readonly { mode: AppMode; label: string }[] = [
 
 export default function MapScreen({
   activeMode,
+  authProvider = 'local',
+  chessAvatar = null,
+  chessUsername = null,
   error,
   isChangingMode,
   isSavingPreferences,
@@ -66,7 +75,9 @@ export default function MapScreen({
   onSaveDapperPreferences,
   onSignOut,
   token,
+  username,
 }: MapScreenProps) {
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [location, setLocation] = useState<Coordinates | null>(null);
   const [isDapperLocationReady, setIsDapperLocationReady] = useState(false);
   const [isGoingOnline, setIsGoingOnline] = useState(false);
@@ -150,6 +161,10 @@ export default function MapScreen({
     setLocationPrompt(null);
     goOffline();
   }
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [chessAvatar]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -582,68 +597,6 @@ export default function MapScreen({
       </View>
 
       <SafeAreaView pointerEvents="box-none" style={styles.overlay}>
-        {isDapperMode && (isGoingOnline || locationPrompt) ? (
-          <View style={styles.promptOverlay}>
-            <View style={styles.promptCard}>
-              {isGoingOnline ? (
-                <>
-                  <ActivityIndicator color="#314b9a" size="small" />
-                  <Text style={styles.promptTitle}>Checking location</Text>
-                  <Text style={styles.promptMessage}>
-                    Location must be enabled to go online as a Dapper.
-                  </Text>
-                  <View style={styles.promptActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={cancelGoOnline}
-                      style={styles.cancelButton}
-                    >
-                      <Text style={styles.cancelButtonText}>Cancel</Text>
-                    </Pressable>
-                  </View>
-                </>
-              ) : locationPrompt ? (
-                <>
-                  <Text style={styles.promptTitle}>
-                    Location required to go online
-                  </Text>
-                  <Text style={styles.promptMessage}>
-                    {locationPrompt.message}
-                  </Text>
-                  <View style={styles.promptActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => void handleGoOnline()}
-                      style={styles.retryButton}
-                    >
-                      <Text style={styles.retryButtonText}>Try again</Text>
-                    </Pressable>
-                    {locationPrompt.canOpenSettings ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={() => void handleOpenSettings()}
-                        style={styles.secondaryButton}
-                      >
-                        <Text style={styles.secondaryButtonText}>
-                          Open settings
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={dismissLocationPrompt}
-                      style={styles.cancelButton}
-                    >
-                      <Text style={styles.cancelButtonText}>Cancel</Text>
-                    </Pressable>
-                  </View>
-                </>
-              ) : null}
-            </View>
-          </View>
-        ) : null}
-
-
         <View pointerEvents="box-none" style={styles.topBar}>
           <View style={styles.modeToggleCard}>
             {MODE_TABS.map((tab) => {
@@ -1307,6 +1260,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 26,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  menuAccountHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#edf1f8',
+  },
+  menuAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#edf1f8',
+  },
+  menuAccountText: {
+    flex: 1,
+  },
+  menuUsername: {
+    color: '#172033',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  menuProviderBadge: {
+    color: '#5b7a38',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  hamburger: {
+    width: 18,
+    height: 12,
+    justifyContent: 'space-between',
+  },
+  hamburgerBar: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#000000',
+  },
+  menuDropdown: {
+    position: 'absolute',
+    top: 52,
+    right: 0,
+    width: 170,
+    borderRadius: 14,
     backgroundColor: '#ffffff',
     shadowColor: '#172033',
     shadowOpacity: 0.2,
