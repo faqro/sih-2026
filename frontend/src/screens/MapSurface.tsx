@@ -5,7 +5,7 @@ import MapView, {
   type MapStyleElement,
   type Region,
 } from 'react-native-maps';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import type { AppMode } from '../api/auth';
 import {
@@ -26,6 +26,13 @@ function toActiveRegion(location: Coordinates): Region {
     latitudeDelta: 0.008,
     longitudeDelta: 0.008,
   };
+}
+
+function toVisibleRegion(location: Coordinates, sheetOpen: boolean): Region {
+  const region = toActiveRegion(location);
+  return sheetOpen
+    ? { ...region, latitude: region.latitude - region.latitudeDelta * 0.45 }
+    : region;
 }
 
 const minimalMapStyle: MapStyleElement[] = [
@@ -53,29 +60,53 @@ const minimalMapStyle: MapStyleElement[] = [
 ];
 
 export type MapSurfaceProps = {
-  location: Coordinates | null;
+  ownLocation: Coordinates | null;
+  counterpartLocation: Coordinates | null;
+  isSheetOpen: boolean;
   mode: AppMode;
 };
 
-function MapSurface({ location, mode }: MapSurfaceProps) {
+function MapSurface({
+  ownLocation,
+  counterpartLocation,
+  isSheetOpen,
+  mode,
+}: MapSurfaceProps) {
+  const { height: viewportHeight } = useWindowDimensions();
   const mapRef = useRef<MapView>(null);
   const isMapReadyRef = useRef(false);
-  const initialHadLocationRef = useRef(Boolean(location));
-  const hadLocationRef = useRef(Boolean(location));
-  const initialRegionRef = useRef<Region>(
-    location ? toActiveRegion(location) : DEFAULT_REGION,
+  const initialHadLocationRef = useRef(
+    Boolean(ownLocation || counterpartLocation),
   );
-  const latestLocationRef = useRef<Coordinates | null>(location);
-  latestLocationRef.current = location;
-
-  const latitude = location?.latitude;
-  const longitude = location?.longitude;
+  const hadLocationRef = useRef(Boolean(ownLocation || counterpartLocation));
+  const initialRegionRef = useRef<Region>(
+    ownLocation
+      ? toActiveRegion(ownLocation)
+      : counterpartLocation
+        ? toActiveRegion(counterpartLocation)
+        : DEFAULT_REGION,
+  );
+  const latestMapStateRef = useRef({
+    ownLocation,
+    counterpartLocation,
+    isSheetOpen,
+  });
+  latestMapStateRef.current = { ownLocation, counterpartLocation, isSheetOpen };
 
   useEffect(() => {
-    if (latitude !== undefined && longitude !== undefined) {
+    if (ownLocation && counterpartLocation) {
+      if (isMapReadyRef.current) {
+        focusBothLocations(ownLocation, counterpartLocation, isSheetOpen, true);
+      }
+      hadLocationRef.current = true;
+      return;
+    }
+
+    const location = ownLocation ?? counterpartLocation;
+    if (location) {
       if (isMapReadyRef.current) {
         mapRef.current?.animateToRegion(
-          toActiveRegion({ latitude, longitude }),
+          toVisibleRegion(location, isSheetOpen),
           350,
         );
       }
@@ -86,7 +117,42 @@ function MapSurface({ location, mode }: MapSurfaceProps) {
       }
       hadLocationRef.current = false;
     }
-  }, [latitude, longitude]);
+  }, [
+    ownLocation?.latitude,
+    ownLocation?.longitude,
+    counterpartLocation?.latitude,
+    counterpartLocation?.longitude,
+    isSheetOpen,
+    viewportHeight,
+  ]);
+
+  function focusBothLocations(
+    first: Coordinates,
+    second: Coordinates,
+    sheetOpen: boolean,
+    animated: boolean,
+  ) {
+    if (
+      Math.abs(first.latitude - second.latitude) < 0.001 &&
+      Math.abs(first.longitude - second.longitude) < 0.001
+    ) {
+      mapRef.current?.animateToRegion(
+        toVisibleRegion(first, sheetOpen),
+        animated ? 350 : 0,
+      );
+      return;
+    }
+
+    mapRef.current?.fitToCoordinates([first, second], {
+      edgePadding: {
+        top: 90,
+        right: 48,
+        bottom: sheetOpen ? viewportHeight / 2 + 32 : 150,
+        left: 48,
+      },
+      animated,
+    });
+  }
 
   return (
     <MapView
@@ -95,13 +161,28 @@ function MapSurface({ location, mode }: MapSurfaceProps) {
       initialRegion={initialRegionRef.current}
       onMapReady={() => {
         isMapReadyRef.current = true;
-        if (latestLocationRef.current) {
-          mapRef.current?.animateToRegion(
-            toActiveRegion(latestLocationRef.current),
-            0,
+        const {
+          ownLocation: latestOwn,
+          counterpartLocation: latestCounterpart,
+          isSheetOpen: latestSheetOpen,
+        } = latestMapStateRef.current;
+        if (latestOwn && latestCounterpart) {
+          focusBothLocations(
+            latestOwn,
+            latestCounterpart,
+            latestSheetOpen,
+            false,
           );
-        } else if (initialHadLocationRef.current) {
-          mapRef.current?.animateToRegion(DEFAULT_REGION, 0);
+        } else {
+          const location = latestOwn ?? latestCounterpart;
+          if (location) {
+            mapRef.current?.animateToRegion(
+              toVisibleRegion(location, latestSheetOpen),
+              0,
+            );
+          } else if (initialHadLocationRef.current) {
+            mapRef.current?.animateToRegion(DEFAULT_REGION, 0);
+          }
         }
       }}
       provider={PROVIDER_GOOGLE}
@@ -109,15 +190,25 @@ function MapSurface({ location, mode }: MapSurfaceProps) {
       showsUserLocation={false}
       style={StyleSheet.absoluteFill}
     >
-      {location ? (
-        <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }}>
+      {ownLocation ? (
+        <Marker
+          coordinate={ownLocation}
+          anchor={{ x: 0.5, y: 0.5 }}
+          title="Your location"
+        >
           <View style={styles.marker}>
-            <View
-              style={[
-                styles.markerDot,
-                mode === 'dapper' ? styles.dapperMarkerDot : styles.orderMarkerDot,
-              ]}
-            />
+            <View style={[styles.markerDot, styles.orderMarkerDot]} />
+          </View>
+        </Marker>
+      ) : null}
+      {counterpartLocation ? (
+        <Marker
+          coordinate={counterpartLocation}
+          anchor={{ x: 0.5, y: 0.5 }}
+          title={mode === 'dapper' ? 'UberDap user' : 'Matched dapper'}
+        >
+          <View style={styles.marker}>
+            <View style={[styles.markerDot, styles.counterpartMarkerDot]} />
           </View>
         </Marker>
       ) : null}
@@ -142,8 +233,8 @@ const styles = StyleSheet.create({
   orderMarkerDot: {
     backgroundColor: '#000000',
   },
-  dapperMarkerDot: {
-    backgroundColor: '#000000',
+  counterpartMarkerDot: {
+    backgroundColor: '#314b9a',
   },
 });
 

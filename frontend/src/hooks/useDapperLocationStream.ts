@@ -28,6 +28,7 @@ type DapperLocationStreamState = {
   isResponding: boolean;
   isConnecting: boolean;
   isOnline: boolean;
+  location: { latitude: number; longitude: number } | null;
   offer: DapperOffer | null;
   markDapDelivered: () => void;
 };
@@ -42,6 +43,10 @@ export function useDapperLocationStream(
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [offer, setOffer] = useState<DapperOffer | null>(null);
   const [activeDap, setActiveDap] = useState<ActiveDap | null>(null);
+  const [location, setLocation] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const locationSubscriptionRef =
     useRef<Location.LocationSubscription | null>(null);
@@ -171,12 +176,17 @@ export function useDapperLocationStream(
             return;
           }
 
+          const currentLocation = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          };
+          setLocation(currentLocation);
+
           try {
             socket.send(
               JSON.stringify({
                 type: 'location',
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
+                ...currentLocation,
               }),
             );
           } catch {
@@ -351,6 +361,7 @@ export function useDapperLocationStream(
     isResponding,
     isConnecting,
     isOnline,
+    location,
     offer,
     markDapDelivered,
   };

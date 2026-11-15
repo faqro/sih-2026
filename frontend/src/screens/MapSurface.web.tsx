@@ -19,39 +19,88 @@ const DEFAULT_ZOOM = 4;
 const ACTIVE_ZOOM = 16;
 
 export type MapSurfaceProps = {
-  location: Coordinates | null;
+  ownLocation: Coordinates | null;
+  counterpartLocation: Coordinates | null;
+  isSheetOpen: boolean;
   mode: AppMode;
 };
 
 function MapViewportController({
-  location,
+  ownLocation,
+  counterpartLocation,
+  isSheetOpen,
 }: {
-  location: Coordinates | null;
+  ownLocation: Coordinates | null;
+  counterpartLocation: Coordinates | null;
+  isSheetOpen: boolean;
 }) {
   const map = useMap();
-  const hadLocationRef = useRef(Boolean(location));
-  const latitude = location?.latitude;
-  const longitude = location?.longitude;
+  const hadLocationRef = useRef(Boolean(ownLocation || counterpartLocation));
 
   useEffect(() => {
-    if (latitude !== undefined && longitude !== undefined) {
-      map.setView([latitude, longitude], ACTIVE_ZOOM);
+    if (ownLocation && counterpartLocation) {
+      if (
+        Math.abs(ownLocation.latitude - counterpartLocation.latitude) < 0.001 &&
+        Math.abs(ownLocation.longitude - counterpartLocation.longitude) < 0.001
+      ) {
+        map.setView(
+          [ownLocation.latitude, ownLocation.longitude],
+          ACTIVE_ZOOM,
+        );
+        if (isSheetOpen) {
+          map.panBy([0, Math.floor(map.getSize().y / 4)], { animate: false });
+        }
+      } else {
+        map.fitBounds(
+          [
+            [ownLocation.latitude, ownLocation.longitude],
+            [counterpartLocation.latitude, counterpartLocation.longitude],
+          ],
+          {
+            padding: [
+              64,
+              isSheetOpen ? Math.floor(map.getSize().y / 2) + 32 : 64,
+            ],
+            maxZoom: ACTIVE_ZOOM,
+          },
+        );
+      }
+      hadLocationRef.current = true;
+      return;
+    }
+    const location = ownLocation ?? counterpartLocation;
+    if (location) {
+      map.setView([location.latitude, location.longitude], ACTIVE_ZOOM);
+      if (isSheetOpen) {
+        map.panBy([0, Math.floor(map.getSize().y / 4)], { animate: false });
+      }
       hadLocationRef.current = true;
     } else if (hadLocationRef.current) {
       map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
       hadLocationRef.current = false;
     }
-  }, [latitude, longitude, map]);
+  }, [
+    ownLocation?.latitude,
+    ownLocation?.longitude,
+    counterpartLocation?.latitude,
+    counterpartLocation?.longitude,
+    isSheetOpen,
+    map,
+  ]);
 
   return null;
 }
 
-function MapSurface({ location, mode }: MapSurfaceProps) {
-  const initialCenter: LatLngExpression = location
-    ? [location.latitude, location.longitude]
+function MapSurface({
+  ownLocation,
+  counterpartLocation,
+  isSheetOpen,
+}: MapSurfaceProps) {
+  const initialLocation = ownLocation ?? counterpartLocation;
+  const initialCenter: LatLngExpression = initialLocation
+    ? [initialLocation.latitude, initialLocation.longitude]
     : DEFAULT_CENTER;
-  const initialZoom = location ? ACTIVE_ZOOM : DEFAULT_ZOOM;
-  const markerFillColor = '#000000';
+  const initialZoom = initialLocation ? ACTIVE_ZOOM : DEFAULT_ZOOM;
 
   return (
     <MapContainer
@@ -64,13 +113,32 @@ function MapSurface({ location, mode }: MapSurfaceProps) {
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <MapViewportController location={location} />
-      {location ? (
+      <MapViewportController
+        ownLocation={ownLocation}
+        counterpartLocation={counterpartLocation}
+        isSheetOpen={isSheetOpen}
+      />
+      {ownLocation ? (
         <CircleMarker
-          center={[location.latitude, location.longitude]}
+          center={[ownLocation.latitude, ownLocation.longitude]}
           pathOptions={{
             color: '#ffffff',
-            fillColor: markerFillColor,
+            fillColor: '#000000',
+            fillOpacity: 1,
+            weight: 5,
+          }}
+          radius={13}
+        />
+      ) : null}
+      {counterpartLocation ? (
+        <CircleMarker
+          center={[
+            counterpartLocation.latitude,
+            counterpartLocation.longitude,
+          ]}
+          pathOptions={{
+            color: '#ffffff',
+            fillColor: '#314b9a',
             fillOpacity: 1,
             weight: 5,
           }}

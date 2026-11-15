@@ -15,6 +15,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { submitDapRating } from '../api/auth';
 import type { AppMode, AuthProvider, DapService } from '../api/auth';
 import { useDapRequest } from '../hooks/useDapRequest';
 import {
@@ -97,6 +98,12 @@ export default function MapScreen({
   const [selectedDap, setSelectedDap] = useState<DapOption>('UberDap');
   const [showMatchToast, setShowMatchToast] = useState(false);
   const [isDapperSheetOpen, setIsDapperSheetOpen] = useState(false);
+  const [selectedCrispinessRating, setSelectedCrispinessRating] = useState<
+    number | null
+  >(null);
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [ratingError, setRatingError] = useState<string | null>(null);
   const { height: viewportHeight } = useWindowDimensions();
   const sheetHeight = viewportHeight / 2;
   const sheetProgress = useRef(new Animated.Value(0)).current;
@@ -133,6 +140,7 @@ export default function MapScreen({
     isResponding,
     isConnecting,
     isOnline: isLocationStreamOnline,
+    location: dapperLocation,
     markDapDelivered,
     offer,
   } = useDapperLocationStream(
@@ -143,14 +151,14 @@ export default function MapScreen({
   const isDapperOnline = isDapperLocationReady && isLocationStreamOnline;
   const hasDapperContent =
     isDapperMode && (offer !== null || activeDap !== null);
-  const displayedLocation = isDapperMode
-    ? isDapperOnline
-      ? location
-      : null
-    : location;
-  const mapLocation = isDapperMode
-    ? activeDap?.location ?? offer?.location ?? displayedLocation
-    : displayedLocation;
+  const ownMapLocation = isDapperMode
+    ? dapperLocation ?? location
+    : dapRequest.userLocation ?? location;
+  const counterpartMapLocation = isDapperMode
+    ? activeDap?.location ?? offer?.location ?? null
+    : dapRequest.status === 'matched'
+      ? dapRequest.matchedDapperLocation
+      : null;
   dapperContentRef.current = hasDapperContent;
 
   function resetDapperLocationState() {
@@ -513,6 +521,9 @@ export default function MapScreen({
 
     setShowMatchToast(false);
     setRequestLocationError(null);
+    setSelectedCrispinessRating(null);
+    setRatingSubmitted(false);
+    setRatingError(null);
     const requestId = ++requestLocationRequestIdRef.current;
     setIsRequestingLocation(true);
 
@@ -576,6 +587,35 @@ export default function MapScreen({
     }
   }
 
+  async function submitCrispinessRating() {
+    if (
+      dapRequest.requestId === null ||
+      selectedCrispinessRating === null ||
+      isSubmittingRating
+    ) {
+      return;
+    }
+
+    setIsSubmittingRating(true);
+    setRatingError(null);
+    try {
+      await submitDapRating(
+        token,
+        dapRequest.requestId,
+        selectedCrispinessRating,
+      );
+      setRatingSubmitted(true);
+    } catch (submitError) {
+      setRatingError(
+        submitError instanceof Error
+          ? submitError.message
+          : 'Unable to save your rating.',
+      );
+    } finally {
+      setIsSubmittingRating(false);
+    }
+  }
+
   const matchMinutesRemaining = Math.ceil(dapRequest.secondsRemaining / 60);
   const formattedMinutes = Math.floor(dapRequest.secondsRemaining / 60);
   const formattedSeconds = String(dapRequest.secondsRemaining % 60).padStart(
@@ -591,8 +631,10 @@ export default function MapScreen({
     <View style={styles.container}>
       <View style={styles.mapLayer}>
         <MapSurface
-          location={mapLocation}
-          mode={activeDap || offer ? 'order' : activeMode}
+          ownLocation={ownMapLocation}
+          counterpartLocation={counterpartMapLocation}
+          isSheetOpen={isRequestMenuOpen || isDapperSheetOpen}
+          mode={activeMode}
         />
       </View>
 
@@ -901,7 +943,11 @@ export default function MapScreen({
                 <Text style={styles.matchedDapperName}>
                   {dapRequest.matchedDapper?.username}
                 </Text>
-                <Text style={styles.crispinessStars}>★★½☆☆</Text>
+                <Text style={styles.crispinessStars}>
+                  {formatCrispinessStars(
+                    dapRequest.matchedDapper?.crispinessRating ?? 2.5,
+                  )}
+                </Text>
                 <Text style={styles.crispinessRating}>
                   Crispiness Rating:{' '}
                   {dapRequest.matchedDapper?.crispinessRating.toFixed(1)} / 5
@@ -912,12 +958,80 @@ export default function MapScreen({
                 <Text style={styles.matchSuccessText}>
                   Your UberDap has been delivered.
                 </Text>
+                {ratingSubmitted ? (
+                  <Text style={styles.ratingThanks}>
+                    Thanks for rating this dap!
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={styles.ratingPrompt}>
+                      Rate the crispiness of your dap
+                    </Text>
+                    <View style={styles.ratingOptions}>
+                      {[1, 2, 3, 4, 5].map((rating) => (
+                        <Pressable
+                          key={rating}
+                          accessibilityLabel={`${rating} out of 5`}
+                          accessibilityRole="radio"
+                          accessibilityState={{
+                            checked: selectedCrispinessRating === rating,
+                          }}
+                          disabled={isSubmittingRating}
+                          onPress={() =>
+                            setSelectedCrispinessRating(rating)
+                          }
+                          style={[
+                            styles.ratingOption,
+                            selectedCrispinessRating === rating &&
+                              styles.ratingOptionSelected,
+                            isSubmittingRating && styles.disabledButton,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.ratingOptionText,
+                              selectedCrispinessRating === rating &&
+                                styles.ratingOptionTextSelected,
+                            ]}
+                          >
+                            {rating}★
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    {ratingError ? (
+                      <Text style={styles.ratingError}>{ratingError}</Text>
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={
+                        selectedCrispinessRating === null ||
+                        isSubmittingRating
+                      }
+                      onPress={() => void submitCrispinessRating()}
+                      style={[
+                        styles.confirmButton,
+                        (selectedCrispinessRating === null ||
+                          isSubmittingRating) &&
+                          styles.disabledButton,
+                      ]}
+                    >
+                      {isSubmittingRating ? (
+                        <ActivityIndicator color="#ffffff" />
+                      ) : (
+                        <Text style={styles.confirmButtonText}>
+                          Submit Rating
+                        </Text>
+                      )}
+                    </Pressable>
+                  </>
+                )}
                 <Pressable
                   accessibilityRole="button"
                   onPress={dapRequest.resetRequest}
-                  style={styles.confirmButton}
+                  style={styles.requestAnotherButton}
                 >
-                  <Text style={styles.confirmButtonText}>
+                  <Text style={styles.requestAnotherButtonText}>
                     Request another UberDap
                   </Text>
                 </Pressable>
@@ -1108,6 +1222,17 @@ export default function MapScreen({
       </SafeAreaView>
     </View>
   );
+}
+
+function formatCrispinessStars(rating: number): string {
+  const roundedRating = Math.max(0, Math.min(5, Math.round(rating * 2) / 2));
+  const fullStars = Math.floor(roundedRating);
+  const hasHalfStar = roundedRating - fullStars >= 0.5;
+  const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+
+  return `${'★'.repeat(fullStars)}${hasHalfStar ? '½' : ''}${'☆'.repeat(
+    emptyStars,
+  )}`;
 }
 
 const styles = StyleSheet.create({
@@ -1650,6 +1775,63 @@ const styles = StyleSheet.create({
     color: '#6f7a90',
     fontSize: 14,
     marginTop: 5,
+  },
+  ratingPrompt: {
+    color: '#6f7a90',
+    fontSize: 14,
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  ratingOptions: {
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 10,
+  },
+  ratingOption: {
+    minWidth: 48,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#dce1ea',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+  },
+  ratingOptionSelected: {
+    borderColor: '#314b9a',
+    backgroundColor: '#f3f5fc',
+  },
+  ratingOptionText: {
+    color: '#6f7a90',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  ratingOptionTextSelected: {
+    color: '#314b9a',
+  },
+  ratingError: {
+    color: '#b42318',
+    fontSize: 13,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  ratingThanks: {
+    color: '#314b9a',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  requestAnotherButton: {
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  requestAnotherButtonText: {
+    color: '#405bb6',
+    fontSize: 14,
+    fontWeight: '700',
   },
   dapperSheet: {
     position: 'absolute',
