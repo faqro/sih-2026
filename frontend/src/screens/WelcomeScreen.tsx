@@ -336,11 +336,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d0d7e2',
+    borderColor: '#ececec',
     backgroundColor: '#ffffff',
   },
   cancelPendingText: {
-    color: '#34425c',
+    color: '#555555',
     fontFamily: displayFontFamily,
     fontSize: 14,
     fontWeight: '600',
