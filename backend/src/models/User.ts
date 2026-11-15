@@ -1,7 +1,7 @@
 import { model, Schema } from 'mongoose';
 
 export type AppMode = 'order' | 'dapper';
-export type AuthProvider = 'local' | 'chess';
+export type AuthProvider = 'local' | 'steam';
 export const DAP_SERVICES = [
   'UberDap',
   'UberDap Plus',
@@ -13,9 +13,9 @@ type UserDocument = {
   username: string;
   password?: string;
   authProvider: AuthProvider;
-  chessId?: string | null;
-  chessUsername?: string | null;
-  chessAvatar?: string | null;
+  steamId?: string | null;
+  steamUsername?: string | null;
+  steamAvatar?: string | null;
   activeMode: AppMode;
   offeredServices: DapService[];
   hasCompletedOnboarding: boolean;
@@ -41,23 +41,22 @@ const userSchema = new Schema<UserDocument>(
     },
     authProvider: {
       type: String,
-      enum: ['local', 'chess'],
+      enum: ['local', 'steam'],
       default: 'local',
       required: true,
     },
-    chessId: {
+    steamId: {
       type: String,
       trim: true,
       unique: true,
       sparse: true,
     },
-    chessUsername: {
+    steamUsername: {
       type: String,
       trim: true,
-      lowercase: true,
       default: null,
     },
-    chessAvatar: {
+    steamAvatar: {
       type: String,
       trim: true,
       default: null,

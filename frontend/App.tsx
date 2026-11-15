@@ -2,6 +2,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
+  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -11,9 +13,13 @@ import {
 import {
   ApiError,
   authenticate,
+  cancelSteamSso,
   completeOnboarding,
   deleteAccount,
+  exchangeSteamSsoCode,
   fetchCurrentUser,
+  fetchSteamSsoStatus,
+  startSteamSso,
   updateDapperPreferences,
   updateActiveMode,
   type AppMode,
@@ -21,8 +27,11 @@ import {
   type AuthUser,
   type DapService,
   type OnboardingChoice,
+  type SteamSsoStatusResponse,
 } from './src/api/auth';
-import AuthFlowScreen from './src/screens/AuthFlowScreen';
+import AuthFlowScreen, {
+  type SocialProvider,
+} from './src/screens/AuthFlowScreen';
 import MapScreen from './src/screens/MapScreen';
 import OnboardingModeScreen, {
   type OnboardingAction,
@@ -37,39 +46,163 @@ type SignedInUser = AuthUser & {
   token: string;
 };
 
+const PROVIDER_LABELS: Record<SocialProvider, string> = {
+  steam: 'Steam',
+  strava: 'Strava',
+  spotify: 'Spotify',
+  osu: 'OSU',
+};
+
+function parseSteamCallbackUrl(rawUrl: string): {
+  code: string | null;
+  error: string | null;
+} {
+  try {
+    const parsed = new URL(rawUrl);
+    return {
+      code: parsed.searchParams.get('steam_code'),
+      error: parsed.searchParams.get('steam_error'),
+    };
+  } catch {
+    return { code: null, error: null };
+  }
+}
+
+function consumeWebSteamCallbackParams(): {
+  code: string | null;
+  error: string | null;
+} {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return { code: null, error: null };
+  }
+
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('steam_code');
+  const error = url.searchParams.get('steam_error');
+
+  if (code !== null || error !== null) {
+    url.searchParams.delete('steam_code');
+    url.searchParams.delete('steam_error');
+    const cleanUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
+
+  return { code, error };
+}
+
 export default function App() {
+  const [initialSteamCallback] = useState(consumeWebSteamCallbackParams);
   const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<SignedInUser | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialSteamCallback.error);
   const [isRestoringSession, setIsRestoringSession] = useState(() =>
-    Boolean(loadAuthToken()),
+    Boolean(initialSteamCallback.code || loadAuthToken() || Platform.OS !== 'web'),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingProvider, setPendingProvider] =
+    useState<SocialProvider | null>(null);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [isChangingMode, setIsChangingMode] = useState(false);
   const [onboardingAction, setOnboardingAction] =
     useState<OnboardingAction | null>(null);
   const modeChangeInProgressRef = useRef(false);
+  const steamPollActiveRef = useRef(false);
+  const activeSteamSessionRef = useRef<{
+    state: string;
+    pollToken: string;
+  } | null>(null);
+  const isExchangingSteamCodeRef = useRef(false);
+  const handledSteamCodesRef = useRef<Set<string>>(new Set());
+  const steamAttemptIdRef = useRef(0);
+  const isMountedRef = useRef(true);
 
   const isLogin = mode === 'login';
 
-  useEffect(() => {
-    const storedToken = loadAuthToken();
-
-    if (!storedToken) {
-      setIsRestoringSession(false);
+  async function completeSteamSignInWithCode(code: string): Promise<void> {
+    if (
+      !code ||
+      handledSteamCodesRef.current.has(code) ||
+      isExchangingSteamCodeRef.current
+    ) {
       return;
     }
 
+    handledSteamCodesRef.current.add(code);
+    steamAttemptIdRef.current += 1;
+    isExchangingSteamCodeRef.current = true;
+    steamPollActiveRef.current = false;
+    activeSteamSessionRef.current = null;
+
+    try {
+      const result = await exchangeSteamSsoCode(code);
+      saveAuthToken(result.token);
+      if (isMountedRef.current) {
+        setUser({ ...result.user, token: result.token });
+        setError(null);
+      }
+    } catch (exchangeError) {
+      if (isMountedRef.current) {
+        setError(
+          exchangeError instanceof Error
+            ? exchangeError.message
+            : 'Unable to complete Steam Sign-In.',
+        );
+      }
+    } finally {
+      isExchangingSteamCodeRef.current = false;
+      if (isMountedRef.current) {
+        setPendingProvider(null);
+      }
+    }
+  }
+
+  useEffect(() => {
+    isMountedRef.current = true;
     let isActive = true;
 
-    async function restoreSession(token: string) {
-      try {
-        const result = await fetchCurrentUser(token);
+    async function initializeSession() {
+      let steamCode = initialSteamCallback.code;
+      let steamCallbackError: string | null = null;
+
+      if (!steamCode && Platform.OS !== 'web') {
+        try {
+          const initialUrl = await Linking.getInitialURL();
+          if (initialUrl) {
+            const parsed = parseSteamCallbackUrl(initialUrl);
+            steamCode = parsed.code;
+            steamCallbackError = parsed.error;
+          }
+        } catch {
+          // Ignore Linking.getInitialURL failures on unsupported environments.
+        }
+      }
+
+      if (steamCallbackError && isActive) {
+        setError(steamCallbackError);
+      }
+
+      if (steamCode) {
+        await completeSteamSignInWithCode(steamCode);
         if (isActive) {
-          setUser({ ...result.user, token });
+          setIsRestoringSession(false);
+        }
+        return;
+      }
+
+      const storedToken = loadAuthToken();
+      if (!storedToken) {
+        if (isActive) {
+          setIsRestoringSession(false);
+        }
+        return;
+      }
+
+      try {
+        const result = await fetchCurrentUser(storedToken);
+        if (isActive) {
+          setUser({ ...result.user, token: storedToken });
         }
       } catch (restoreError) {
         clearAuthToken();
@@ -89,18 +222,190 @@ export default function App() {
       }
     }
 
-    void restoreSession(storedToken);
+    void initializeSession();
 
     return () => {
       isActive = false;
+      isMountedRef.current = false;
+      steamPollActiveRef.current = false;
+    };
+  }, [initialSteamCallback.code]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      const { code, error: callbackError } = parseSteamCallbackUrl(url);
+
+      if (code) {
+        void completeSteamSignInWithCode(code);
+        return;
+      }
+
+      if (callbackError) {
+        steamAttemptIdRef.current += 1;
+        steamPollActiveRef.current = false;
+        activeSteamSessionRef.current = null;
+        setPendingProvider(null);
+        setError(callbackError);
+      }
+    });
+
+    return () => {
+      subscription.remove();
     };
   }, []);
 
   function signOut(nextError: string | null = null) {
+    steamPollActiveRef.current = false;
+    activeSteamSessionRef.current = null;
     clearAuthToken();
     setUser(null);
+    setPendingProvider(null);
     setOnboardingAction(null);
     setError(nextError);
+  }
+
+  async function handleCancelSteamSso() {
+    steamAttemptIdRef.current += 1;
+    steamPollActiveRef.current = false;
+    const activeSession = activeSteamSessionRef.current;
+    activeSteamSessionRef.current = null;
+    setPendingProvider(null);
+    setError(null);
+
+    if (activeSession) {
+      await cancelSteamSso(activeSession.state, activeSession.pollToken).catch(
+        () => {},
+      );
+    }
+  }
+
+  async function handleProviderPress(provider: SocialProvider) {
+    if (provider !== 'steam') {
+      setError(
+        `${PROVIDER_LABELS[provider]} sign-in is coming soon. Please use Steam or Log in / Sign up.`,
+      );
+      return;
+    }
+
+    const attemptId = ++steamAttemptIdRef.current;
+    const isCurrentAttempt = () =>
+      isMountedRef.current && steamAttemptIdRef.current === attemptId;
+    let startedSession: { state: string; pollToken: string } | null = null;
+    setError(null);
+    setPendingProvider('steam');
+
+    try {
+      const returnTo =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? `${window.location.origin}${window.location.pathname}`
+          : 'uberdaps://auth/steam';
+
+      const { authorizeUrl, state, pollToken } = await startSteamSso(returnTo);
+      if (!isCurrentAttempt()) {
+        void cancelSteamSso(state, pollToken).catch(() => {});
+        return;
+      }
+
+      startedSession = { state, pollToken };
+      activeSteamSessionRef.current = startedSession;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign(authorizeUrl);
+        return;
+      }
+
+      await Linking.openURL(authorizeUrl);
+      if (!isCurrentAttempt()) {
+        return;
+      }
+      steamPollActiveRef.current = true;
+
+      const deadline = Date.now() + 3 * 60 * 1000;
+      let consecutivePollErrors = 0;
+      while (
+        steamPollActiveRef.current &&
+        isCurrentAttempt() &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (!steamPollActiveRef.current || !isCurrentAttempt()) {
+          return;
+        }
+
+        let status: SteamSsoStatusResponse;
+        try {
+          status = await fetchSteamSsoStatus(state, pollToken);
+          consecutivePollErrors = 0;
+        } catch (pollError) {
+          if (!steamPollActiveRef.current || !isCurrentAttempt()) {
+            return;
+          }
+          if (
+            pollError instanceof ApiError &&
+            pollError.status >= 400 &&
+            pollError.status < 500
+          ) {
+            throw pollError;
+          }
+          consecutivePollErrors += 1;
+          if (consecutivePollErrors >= 5) {
+            throw pollError;
+          }
+          continue;
+        }
+
+        if (!steamPollActiveRef.current || !isCurrentAttempt()) {
+          return;
+        }
+
+        if (status.status === 'completed') {
+          await completeSteamSignInWithCode(status.code);
+          return;
+        }
+
+        if (
+          status.status === 'error' ||
+          status.status === 'expired' ||
+          status.status === 'cancelled'
+        ) {
+          activeSteamSessionRef.current = null;
+          setError(status.message);
+          setPendingProvider(null);
+          steamPollActiveRef.current = false;
+          return;
+        }
+      }
+
+      if (steamPollActiveRef.current && isCurrentAttempt()) {
+        steamPollActiveRef.current = false;
+        activeSteamSessionRef.current = null;
+        setError('Steam sign-in timed out. Please try again.');
+        setPendingProvider(null);
+        await cancelSteamSso(state, pollToken).catch(() => {});
+      }
+    } catch (ssoError) {
+      if (!isCurrentAttempt()) {
+        return;
+      }
+      steamPollActiveRef.current = false;
+      activeSteamSessionRef.current = null;
+      setPendingProvider(null);
+      setError(
+        ssoError instanceof Error
+          ? ssoError.message
+          : 'Unable to start Steam Sign-In.',
+      );
+      if (startedSession) {
+        void cancelSteamSso(
+          startedSession.state,
+          startedSession.pollToken,
+        ).catch(() => {});
+      }
+    }
   }
 
   function handleSessionError(err: unknown, fallbackMessage: string) {
@@ -290,6 +595,7 @@ export default function App() {
           <StatusBar style="dark" />
           <MapScreen
             activeMode={user.activeMode}
+            authProvider={user.authProvider}
             error={error}
             isChangingMode={isChangingMode}
             isSavingPreferences={isSavingPreferences}
@@ -299,7 +605,10 @@ export default function App() {
             onDeleteAccount={() => void removeAccount()}
             onSaveDapperPreferences={handleSaveDapperPreferences}
             onSignOut={() => signOut()}
+            steamAvatar={user.steamAvatar}
+            steamUsername={user.steamUsername}
             token={user.token}
+            username={user.username}
           />
         </View>
       </View>
@@ -313,13 +622,16 @@ export default function App() {
         <AuthFlowScreen
           error={error}
           isSubmitting={isSubmitting}
+          onCancelProvider={() => void handleCancelSteamSso()}
           onClearError={() => setError(null)}
+          onPressProvider={(provider) => void handleProviderPress(provider)}
           onSubmit={(nextMode, nextUser, nextPass) => {
             setMode(nextMode);
             setUsername(nextUser);
             setPassword(nextPass);
             void submit(nextMode, nextUser, nextPass);
           }}
+          pendingProvider={pendingProvider}
         />
       </View>
     </View>
