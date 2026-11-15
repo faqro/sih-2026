@@ -23,31 +23,31 @@ const PROVIDERS: readonly ProviderConfig[] = [
   {
     id: 'steam',
     label: 'Continue with Steam',
-    borderColor: '#9AA7B8',
+    borderColor: '#ACB2BE',
     icon: require('../../assets/providers/steam.png'),
   },
   {
     id: 'strava',
     label: 'Continue with Strava',
-    borderColor: '#F7C6B3',
+    borderColor: '#FAC8B8',
     icon: require('../../assets/providers/strava.png'),
   },
   {
     id: 'spotify',
     label: 'Continue with Spotify',
-    borderColor: '#B5ECC7',
+    borderColor: '#B3EEC9',
     icon: require('../../assets/providers/spotify.png'),
   },
   {
     id: 'osu',
     label: 'Continue with OSU',
-    borderColor: '#F2C6DC',
+    borderColor: '#FBD1E4',
     icon: require('../../assets/providers/osu.png'),
   },
   {
     id: 'chess',
     label: 'Continue with Chess.com',
-    borderColor: '#CFE2B8',
+    borderColor: '#D7E8C7',
     icon: require('../../assets/providers/chess.png'),
   },
 ];
@@ -128,7 +128,15 @@ export default function WelcomeScreen({
                 onPress={() => onPressProvider?.(provider.id)}
                 style={({ pressed }) => [
                   styles.providerButton,
-                  { borderColor: provider.borderColor },
+                  {
+                    borderColor: provider.borderColor,
+                    shadowColor: provider.borderColor,
+                    ...(Platform.OS === 'web'
+                      ? ({
+                          boxShadow: `0 0 10px 1px ${provider.borderColor}`,
+                        } as any)
+                      : {}),
+                  },
                   pressed && styles.buttonPressed,
                 ]}
               >
@@ -202,7 +210,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
-    backgroundColor: '#eaeaea',
+    backgroundColor: '#ececec',
   },
   primaryButtonText: {
     color: '#000000',
@@ -212,7 +220,8 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   buttonPressed: {
-    opacity: 0.78,
+    opacity: 0.85,
+    transform: [{ scale: 0.985 }],
   },
   dividerRow: {
     flexDirection: 'row',
@@ -240,7 +249,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
     borderWidth: 1.5,
-    backgroundColor: '#efefef',
+    backgroundColor: '#ececec',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 7,
+    elevation: 3,
   },
   providerButtonInner: {
     width: 232,

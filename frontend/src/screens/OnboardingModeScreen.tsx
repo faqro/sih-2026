@@ -1,6 +1,8 @@
+import { useRef } from 'react';
 import {
   ActivityIndicator,
-  Image,
+  Animated,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -10,24 +12,32 @@ import {
 
 import type { AppMode } from '../api/auth';
 
+const displayFontFamily = Platform.select({
+  web: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  default: undefined,
+});
+
 export type OnboardingAction = AppMode | 'skip';
 
 type ModeCardConfig = {
   mode: AppMode;
+  badge: string;
   title: string;
   description: string;
 };
 
 const MODE_CARDS: readonly ModeCardConfig[] = [
   {
-    mode: 'dapper',
-    title: 'Become a Dapper',
-    description: 'Go on the map to pick up and fulfill nearby dap requests.',
+    mode: 'order',
+    badge: 'PASSENGER',
+    title: 'Order a Dap',
+    description: 'Call a dapper to your exact location for a high-resonance dap on demand.',
   },
   {
-    mode: 'order',
-    title: 'Order a Dap',
-    description: 'Use the map to find nearby dappers and order a dap.',
+    mode: 'dapper',
+    badge: 'DRIVER / FULFILLER',
+    title: 'Become a Dapper',
+    description: 'Hit the streets, receive live nearby requests, and deliver immaculate dap ups.',
   },
 ];
 
@@ -51,19 +61,13 @@ export default function OnboardingModeScreen({
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.content}>
+        {/* Top Header */}
         <View style={styles.topRow}>
-          <View style={styles.brandMark}>
-            <Image
-              accessibilityLabel="Uber DAPS logo"
-              resizeMode="cover"
-              source={require('../../assets/uberdaps-logo.jpg')}
-              style={styles.brandMarkImage}
-            />
-          </View>
+          <Text style={styles.brandTitle}>UberDaps</Text>
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting}
-            hitSlop={8}
+            hitSlop={10}
             onPress={onSignOut}
           >
             <Text style={[styles.signOutLink, isSubmitting && styles.dimmed]}>
@@ -72,11 +76,12 @@ export default function OnboardingModeScreen({
           </Pressable>
         </View>
 
-        <Text style={styles.title}>Choose where to start</Text>
+        <Text style={styles.title}>Choose your role</Text>
         <Text style={styles.subtitle}>
-          Pick a cue card below or skip for now. You can switch anytime later.
+          Select your primary mode to get started on the streets. You can switch anytime.
         </Text>
 
+        {/* Mode cards */}
         <View style={styles.cardsStack}>
           {MODE_CARDS.map((card) => {
             const isPending = pendingAction === card.mode;
@@ -94,9 +99,12 @@ export default function OnboardingModeScreen({
                 ]}
               >
                 <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitle}>{card.title}</Text>
+                  <View style={styles.titleRow}>
+                    <Text style={styles.cardBadge}>{card.badge}</Text>
+                    <Text style={styles.cardTitle}>{card.title}</Text>
+                  </View>
                   {isPending ? (
-                    <ActivityIndicator color="#314b9a" size="small" />
+                    <ActivityIndicator color="#000000" size="small" />
                   ) : (
                     <Text style={styles.cardArrow}>→</Text>
                   )}
@@ -109,17 +117,22 @@ export default function OnboardingModeScreen({
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
+        {/* Footer */}
         <View style={styles.footer}>
           <Pressable
             accessibilityRole="button"
             disabled={isSubmitting}
             onPress={onSkip}
-            style={[styles.skipButton, isSubmitting && styles.dimmed]}
+            style={({ pressed }) => [
+              styles.skipButton,
+              pressed && styles.buttonPressed,
+              isSubmitting && styles.dimmed,
+            ]}
           >
             {pendingAction === 'skip' ? (
-              <ActivityIndicator color="#405bb6" size="small" />
+              <ActivityIndicator color="#000000" size="small" />
             ) : (
-              <Text style={styles.skipButtonText}>Skip</Text>
+              <Text style={styles.skipButtonText}>Skip for now</Text>
             )}
           </Pressable>
         </View>
@@ -131,72 +144,67 @@ export default function OnboardingModeScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    backgroundColor: '#ffffff',
   },
   content: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 28,
+    paddingHorizontal: 24,
     paddingVertical: 28,
+    backgroundColor: '#ffffff',
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 32,
   },
-  brandMark: {
-    width: 52,
-    height: 52,
-    overflow: 'hidden',
-    borderRadius: 17,
-    backgroundColor: '#000000',
-  },
-  brandMarkImage: {
-    width: '100%',
-    height: '100%',
+  brandTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 26,
+    fontWeight: '700',
+    letterSpacing: -0.6,
   },
   signOutLink: {
-    color: '#6f7a90',
+    color: '#666666',
+    fontFamily: displayFontFamily,
     fontSize: 14,
     fontWeight: '600',
   },
   title: {
-    color: '#172033',
-    fontSize: 30,
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 32,
     fontWeight: '700',
-    letterSpacing: -0.5,
-    marginBottom: 9,
+    letterSpacing: -0.8,
+    marginBottom: 8,
   },
   subtitle: {
-    color: '#6f7a90',
+    color: '#666666',
+    fontFamily: displayFontFamily,
     fontSize: 15,
     lineHeight: 22,
+    letterSpacing: -0.2,
   },
   cardsStack: {
-    gap: 14,
-    marginTop: 28,
+    gap: 16,
+    marginTop: 32,
   },
   cueCard: {
-    minHeight: 132,
+    minHeight: 130,
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#dce1ea',
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: 20,
-    paddingVertical: 22,
-    backgroundColor: '#ffffff',
-    shadowColor: '#1e293b',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
+    paddingVertical: 20,
+    backgroundColor: '#ececec',
   },
   cueCardPressed: {
-    borderColor: '#314b9a',
-    backgroundColor: '#f8faff',
+    backgroundColor: '#e2e2e2',
+    transform: [{ scale: 0.99 }],
   },
   dimmed: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -204,44 +212,62 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
   },
-  cardTitle: {
-    color: '#172033',
-    fontSize: 20,
+  titleRow: {
+    gap: 4,
+  },
+  cardBadge: {
+    color: '#777777',
+    fontFamily: displayFontFamily,
+    fontSize: 11,
     fontWeight: '700',
-    letterSpacing: -0.3,
+    letterSpacing: 0.8,
+  },
+  cardTitle: {
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.4,
   },
   cardArrow: {
-    color: '#405bb6',
-    fontSize: 18,
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 22,
     fontWeight: '700',
   },
   cardDescription: {
-    color: '#6f7a90',
+    color: '#444444',
+    fontFamily: displayFontFamily,
     fontSize: 14,
     lineHeight: 20,
   },
   error: {
-    color: '#b42318',
+    color: '#ee4d4d',
+    fontFamily: displayFontFamily,
     fontSize: 13,
     lineHeight: 19,
     textAlign: 'center',
     marginTop: 16,
   },
   footer: {
-    marginTop: 20,
+    marginTop: 28,
   },
   skipButton: {
-    height: 48,
+    height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#cbd3e3',
-    borderRadius: 13,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#000000',
     backgroundColor: 'transparent',
   },
+  buttonPressed: {
+    backgroundColor: '#ececec',
+  },
   skipButtonText: {
-    color: '#405bb6',
-    fontSize: 15,
+    color: '#000000',
+    fontFamily: displayFontFamily,
+    fontSize: 16,
     fontWeight: '700',
   },
 });
